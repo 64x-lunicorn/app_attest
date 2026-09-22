@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="340" viewBox="0 0 1200 340" role="img" aria-labelledby="title">
+  <!-- write-readme placeholder: replace this file with the project banner. -->
+  <title id="title">app_attest banner placeholder</title>
+  <rect width="1200" height="340" fill="#1e293b"/>
+  <text x="600" y="170" fill="#f8fafc" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="64" font-weight="700" text-anchor="middle">app_attest</text>
+  <text x="600" y="230" fill="#94a3b8" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="24" text-anchor="middle">Banner placeholder</text>
+</svg>

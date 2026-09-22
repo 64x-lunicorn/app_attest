@@ -1,0 +1,18 @@
+name: Request
+description: A problem you would like solved, or an idea.
+labels: ["request", "needs-triage"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Which problem
+      description: What are you trying to do, and what gets in the way?
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: How you imagine it
+      description: Optional.
+    validations:
+      required: false

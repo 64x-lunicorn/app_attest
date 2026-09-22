@@ -1,0 +1,24 @@
+name: Bug
+description: Something does not work as expected.
+labels: ["bug", "needs-triage"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you do, and what did you see?
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Version or environment
+      description: The version you use, and your operating system or browser when it matters.
+    validations:
+      required: true

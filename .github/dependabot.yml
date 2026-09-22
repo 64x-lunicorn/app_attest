@@ -1,0 +1,35 @@
+# Dependency updates arrive as pull requests, through the same gate as
+# everything else. Without the github-actions entry, the SHA pins in CI would
+# quietly rot. The seven-day cooldown keeps a freshly published, possibly
+# compromised release out until it has been around for a week.
+version: 2
+
+updates:
+  - package-ecosystem: mix
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/Berlin
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+    labels:
+      - dependencies
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/Berlin
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+    labels:
+      - dependencies
+    groups:
+      actions:
+        patterns:
+          - "*"
