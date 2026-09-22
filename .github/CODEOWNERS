@@ -1,0 +1,9 @@
+# Every file has an owner, so every pull request names who is responsible for it.
+* @64x-lunicorn
+
+# The paths where a mistake is expensive and silent: they define the quality gate, what the project ships, and what reaches a release. Called out separately so a change here is never skimmed.
+/.github/workflows/                  @64x-lunicorn
+/.claude/64x-lunicorn.yml            @64x-lunicorn
+/mix.exs                             @64x-lunicorn
+/mix.lock                            @64x-lunicorn
+/lib/app_attest/root_certificate.ex  @64x-lunicorn

@@ -1,0 +1,18 @@
+setup_version: 3
+forge: github
+default_branch: main
+research:
+  path: research/
+  tracked: true  # false = gitignored, local only
+issues:
+  tracker: forge
+  path: null
+ci:
+  command: mix ci
+  runtime: { stack: elixir, elixir: "1.20", otp: "29" }
+  runner: null
+  checks:
+    - { name: Format, run: mix format --check-formatted, required: true }
+    - { name: Unused deps, run: mix deps.unlock --check-unused, required: true }
+    - { name: Compile, run: mix compile --warnings-as-errors, required: true }
+    - { name: Test, run: mix test, required: true }
