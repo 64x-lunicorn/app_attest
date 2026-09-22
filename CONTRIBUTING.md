@@ -28,7 +28,7 @@ Before pushing, run the whole gate in one command:
 mix ci
 ```
 
-It runs every check CI runs: Format, Unused deps, Compile, Test. On a pull request, CI also runs Workflow lint and Secret scan and ends in `CI gate`, the only required status check. [docs/ci-cd.md](docs/ci-cd.md) describes the gate and the rules on `main`.
+It runs every check CI runs: Format, Unused deps, Compile, Test. On a pull request, CI also runs Pending scenarios (advisory), Workflow lint and Secret scan and ends in `CI gate`, the only required status check. [docs/ci-cd.md](docs/ci-cd.md) describes the gate and the rules on `main`.
 
 ## Submitting a pull request
 
