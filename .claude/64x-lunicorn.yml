@@ -16,3 +16,4 @@ ci:
     - { name: Unused deps, run: mix deps.unlock --check-unused, required: true }
     - { name: Compile, run: mix compile --warnings-as-errors, required: true }
     - { name: Test, run: mix test, required: true }
+    - { name: Pending scenarios, run: mix test --only pending, required: false }
