@@ -172,12 +172,13 @@ defmodule AppAttest.IntegrationTest do
   describe "Every rejection is deliberately constructed, not assumed (spans #168 and #169)" do
     test "Every rejection case is proven, not only assumed" do
       device = stored_device(41)
+      {wrong_private_key, _wrong_public_key} = AppAttest.Fixtures.device_key_pair()
 
       # One attestation or assertion per specific check this Spec names,
       # each built to fail exactly that check and nothing else: the three
       # Attestation ones deliberately mismatch one real Attestation's
-      # challenge, App ID or trusted root at a time (#168); the Assertion
-      # one is #169's own self-generated fixture to build.
+      # challenge, App ID or trusted root at a time (#168); the two
+      # Assertion ones are #169's own self-generated fixtures to build.
       results = %{
         untrusted_root:
           AppAttest.Attestation.validate(
@@ -206,6 +207,13 @@ defmodule AppAttest.IntegrationTest do
         counter_not_increasing:
           AppAttest.Assertion.validate(
             AppAttest.Fixtures.assertion(device.counter, @app_id, device.private_key),
+            @app_id,
+            device.public_key,
+            device.counter
+          ),
+        invalid_signature:
+          AppAttest.Assertion.validate(
+            AppAttest.Fixtures.assertion(device.counter + 1, @app_id, wrong_private_key),
             @app_id,
             device.public_key,
             device.counter
