@@ -68,6 +68,35 @@ defmodule AppAttest.AuthenticatorData do
 
   def parse(_too_short), do: {:error, :invalid_authenticator_data}
 
+  @doc "Whether `authenticator_data`'s App ID hash matches `app_id` (`\"<Team ID>.<bundle ID>\"`)."
+  @spec app_id_matches?(t(), String.t()) :: boolean()
+  def app_id_matches?(%__MODULE__{app_id_hash: app_id_hash}, app_id) do
+    app_id_hash == :crypto.hash(:sha256, app_id)
+  end
+
+  @doc """
+  Checks `authenticator_data`'s App ID hash against `app_id`
+  (`"<Team ID>.<bundle ID>"`), the check both `AppAttest.Attestation` and
+  `AppAttest.Assertion` make identically (duplication finding on #169).
+  """
+  @spec check_app_id(t(), String.t()) :: :ok | {:error, :app_id_mismatch}
+  def check_app_id(authenticator_data, app_id) do
+    if app_id_matches?(authenticator_data, app_id) do
+      :ok
+    else
+      {:error, :app_id_mismatch}
+    end
+  end
+
+  @doc false
+  # Shared with `AppAttest.Attestation` and `AppAttest.Assertion`: the `cbor`
+  # package wraps every decoded CBOR byte string (the format Apple uses for
+  # authData, each x5c certificate, an Assertion's own signature and
+  # authenticatorData) in a `%CBOR.Tag{tag: :bytes, value: binary}`, rather
+  # than handing back the raw binary directly (its own README explains why).
+  @spec unwrap_bytes(CBOR.Tag.t()) :: binary()
+  def unwrap_bytes(%CBOR.Tag{tag: :bytes, value: value}), do: value
+
   defp parse_attested_credential_data(<<>>), do: :none
 
   defp parse_attested_credential_data(
