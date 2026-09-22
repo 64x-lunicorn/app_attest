@@ -3,7 +3,8 @@ defmodule AppAttest.Fixtures do
   A real, Apple-issued development Attestation, reused under MIT license
   (notice kept, see the repository's own `NOTICE` file) from
   `uebelack/node-app-attest`'s `test/fixtures/attestation-development.json`
-  (https://github.com/uebelack/node-app-attest).
+  (https://github.com/uebelack/node-app-attest); plus self-generated device
+  key pairs and Assertions (#169).
 
   The Spec's own domain rule 6 (#166) — validation is trusted only once
   proven against Attestations Apple actually issued, not only against
@@ -13,7 +14,10 @@ defmodule AppAttest.Fixtures do
   bytes with one input deliberately wrong at a time (wrong challenge, wrong
   App ID, wrong root), so each is proven to fail for that one specific
   reason (Spec domain rule 7) without needing separate self-generated
-  fixtures for them.
+  fixtures for them. Domain rule 6 names Attestations specifically: no real
+  device Assertion is recorded, so `device_key_pair/0` and `assertion/3`
+  build self-signed Assertion data instead (#169's own implementation
+  notes).
   """
 
   @fixture_path Path.join(__DIR__, "fixtures/attestation-development.json")
@@ -64,5 +68,48 @@ defmodule AppAttest.Fixtures do
     |> X509.PrivateKey.new_ec()
     |> X509.Certificate.self_signed("/CN=Not Apple", template: :root_ca)
     |> X509.Certificate.to_der()
+  end
+
+  @doc """
+  A freshly self-generated device key pair, standing in for a device's
+  Secure Enclave App Attest key (#169). No real Assertion is recorded (only
+  the Attestation above is): the Spec's own domain rule 6 (#166) requires
+  proof against real, Apple-issued data only for Attestations, so an
+  Assertion's "genuine" scenario and its rejection fixtures are self-signed
+  here instead, the same way `untrusted_root/0` self-signs a substitute
+  root.
+  """
+  @spec device_key_pair() :: {X509.PrivateKey.t(), :public_key.public_key()}
+  def device_key_pair do
+    private_key = X509.PrivateKey.new_ec(:secp256r1)
+    {private_key, X509.PublicKey.derive(private_key)}
+  end
+
+  @doc """
+  A self-generated, CBOR-encoded Assertion object for `counter` and `app_id`
+  (`"<Team ID>.<bundle ID>"`), signed by `private_key` over its own
+  authenticator data — the same 37-byte prefix shape
+  `AppAttest.AuthenticatorData.parse/1` already parses for an Assertion (no
+  attested credential data).
+
+  Mirrors `attestation/0`'s own "wrong App ID hash" pattern: build one fixed
+  fixture, then vary the *expected* app ID passed to `validate/4` to
+  construct the mismatch, rather than varying the fixture itself.
+
+  Both the signature and the authenticator data are wrapped in
+  `%CBOR.Tag{tag: :bytes}` before encoding, so they decode back the same
+  way a real Apple-issued Assertion's fields do (confirmed against the
+  `attestation-development.json` fixture's own `authData`): plain
+  `CBOR.encode/1` of a raw binary produces a CBOR *text* string instead.
+  """
+  @spec assertion(non_neg_integer(), String.t(), X509.PrivateKey.t()) :: binary()
+  def assertion(counter, app_id, private_key) do
+    auth_data = <<:crypto.hash(:sha256, app_id)::binary, 0, counter::32-big>>
+    signature = :public_key.sign(auth_data, :sha256, private_key)
+
+    CBOR.encode(%{
+      "signature" => %CBOR.Tag{tag: :bytes, value: signature},
+      "authenticatorData" => %CBOR.Tag{tag: :bytes, value: auth_data}
+    })
   end
 end

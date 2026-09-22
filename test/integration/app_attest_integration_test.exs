@@ -13,17 +13,22 @@ defmodule AppAttest.IntegrationTest do
   for a bug in its own setup. A later ticket removes one test's `pending` tag
   at a time as it builds the behaviour that test names (order: #175).
 
-  The Assertion, RiskMetric and dev/prod fixtures below are still placeholder
-  data, not real CBOR or X.509 bytes: those tickets' own scope is not yet
-  built. The exact shape of what `validate/5` and `fetch/3` accept and return
-  is this harness's own first draft, taken from architecture #174's Flow
-  diagram; the ticket that first makes a test pass may still adjust it —
-  #168 did, for `AppAttest.Attestation.validate/5`: it takes the raw,
+  The RiskMetric and dev/prod fixtures below are still placeholder data, not
+  real CBOR or X.509 bytes: those tickets' own scope (#170, #171) is not yet
+  built. The exact shape of what `validate/N` and `fetch/3` accept and
+  return is this harness's own first draft, taken from architecture #174's
+  Flow diagram; the ticket that first makes a test pass may still adjust it
+  — #168 did, for `AppAttest.Attestation.validate/5`: it takes the raw,
   CBOR-encoded attestation object Apple's SDK produces, so its own fixtures
   (`AppAttest.Fixtures`, `test/support/`) are a real, Apple-issued
   development Attestation, reused under MIT license from
   uebelack/node-app-attest (Spec #166's own domain rule 6: proven against
-  Attestations Apple actually issued, not only self-generated data).
+  Attestations Apple actually issued, not only self-generated data). #169
+  did too, for `AppAttest.Assertion.validate/4`: it drops the placeholder's
+  environment parameters (#170's to add) and takes the raw, CBOR-encoded
+  assertion object Apple's SDK produces; domain rule 6 names Attestations
+  only, so its fixtures (`AppAttest.Fixtures.device_key_pair/0` and
+  `assertion/3`) are self-generated instead.
   """
 
   use ExUnit.Case, async: true
@@ -33,7 +38,15 @@ defmodule AppAttest.IntegrationTest do
   @key_id "device-key-id"
 
   defp stored_device(counter, environment \\ :development) do
-    %{key_id: @key_id, public_key: :device_public_key, counter: counter, environment: environment}
+    {private_key, public_key} = AppAttest.Fixtures.device_key_pair()
+
+    %{
+      key_id: @key_id,
+      private_key: private_key,
+      public_key: public_key,
+      counter: counter,
+      environment: environment
+    }
   end
 
   describe "Attestation (built by #168)" do
@@ -83,48 +96,32 @@ defmodule AppAttest.IntegrationTest do
   end
 
   describe "Assertion (built by #169)" do
-    @tag pending: "AppAttest.Assertion does not exist yet (#169)"
     test "A genuine assertion with an increasing Counter is accepted" do
       device = stored_device(41)
-      assertion = %{counter: 42, app_id_hash: @app_id}
+      assertion = AppAttest.Fixtures.assertion(42, @app_id, device.private_key)
 
-      assert {:ok, %{counter: 42}} =
-               AppAttest.Assertion.validate(
-                 assertion,
-                 device.public_key,
-                 device.counter,
-                 device.environment,
-                 device.environment
-               )
+      assert {:ok, 42} =
+               AppAttest.Assertion.validate(assertion, @app_id, device.public_key, device.counter)
     end
 
-    @tag pending: "AppAttest.Assertion does not exist yet (#169)"
     test "A replayed assertion is rejected" do
       device = stored_device(42)
-      assertion = %{counter: 42, app_id_hash: @app_id}
+      assertion = AppAttest.Fixtures.assertion(42, @app_id, device.private_key)
 
       assert {:error, :counter_not_increasing} =
-               AppAttest.Assertion.validate(
-                 assertion,
-                 device.public_key,
-                 device.counter,
-                 device.environment,
-                 device.environment
-               )
+               AppAttest.Assertion.validate(assertion, @app_id, device.public_key, device.counter)
     end
 
-    @tag pending: "AppAttest.Assertion does not exist yet (#169)"
     test "An assertion with a wrong App ID hash is rejected" do
       device = stored_device(41)
-      assertion = %{counter: 42, app_id_hash: "a-different-app-id-hash"}
+      assertion = AppAttest.Fixtures.assertion(42, @app_id, device.private_key)
 
       assert {:error, :app_id_mismatch} =
                AppAttest.Assertion.validate(
                  assertion,
+                 "a-different-app-id",
                  device.public_key,
-                 device.counter,
-                 device.environment,
-                 device.environment
+                 device.counter
                )
     end
   end
@@ -173,7 +170,6 @@ defmodule AppAttest.IntegrationTest do
   end
 
   describe "Every rejection is deliberately constructed, not assumed (spans #168 and #169)" do
-    @tag pending: "AppAttest.Attestation and AppAttest.Assertion do not exist yet (#168, #169)"
     test "Every rejection case is proven, not only assumed" do
       device = stored_device(41)
 
@@ -209,11 +205,10 @@ defmodule AppAttest.IntegrationTest do
           ),
         counter_not_increasing:
           AppAttest.Assertion.validate(
-            %{counter: device.counter, app_id_hash: @app_id},
+            AppAttest.Fixtures.assertion(device.counter, @app_id, device.private_key),
+            @app_id,
             device.public_key,
-            device.counter,
-            device.environment,
-            device.environment
+            device.counter
           )
       }
 
