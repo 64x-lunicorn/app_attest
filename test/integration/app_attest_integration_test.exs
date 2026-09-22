@@ -10,7 +10,7 @@ defmodule AppAttest.IntegrationTest do
   excludes `:pending` from the required `Test` check; the advisory
   `Pending scenarios` check (`.claude/64x-lunicorn.yml`) runs `mix test --only
   pending` so every one of them visibly fails for its missing behaviour, not
-  for a bug in its own setup. A later ticket removes one test's `@tag :pending`
+  for a bug in its own setup. A later ticket removes one test's `pending` tag
   at a time as it builds the behaviour that test names (order: #175).
 
   The fixtures below are placeholder data, not real CBOR or X.509 bytes: this
