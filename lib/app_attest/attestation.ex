@@ -19,9 +19,8 @@ defmodule AppAttest.Attestation do
   * `:untrusted_root` - the certificate chain does not lead to `root`.
   * `:nonce_mismatch` - the nonce does not match `challenge`.
   * `:app_id_mismatch` - the App ID hash does not match `app_id`.
-  * `:key_id_mismatch` - the attested credential ID does not match `key_id`.
   """
-  @type rejection :: :untrusted_root | :nonce_mismatch | :app_id_mismatch | :key_id_mismatch
+  @type rejection :: :untrusted_root | :nonce_mismatch | :app_id_mismatch
 
   # Apple's own extension OID for the nonce, carried in the credential
   # certificate (credCert): a DER SEQUENCE containing one element, a
@@ -33,29 +32,30 @@ defmodule AppAttest.Attestation do
 
   @doc """
   Validates `attestation_object` — the raw, CBOR-encoded attestation Apple's
-  SDK produces — against `key_id` (the app-supplied key identifier, base64),
-  `challenge` (the one-time server challenge the device attested), `app_id`
-  (`"<Team ID>.<bundle ID>"`) and `root` (Apple's App Attest root, or a
-  substitute — `AppAttest.RootCertificate`, never `Application` config).
+  SDK produces — against `challenge` (the one-time server challenge the
+  device attested), `app_id` (`"<Team ID>.<bundle ID>"`) and `root` (Apple's
+  App Attest root, or a substitute — `AppAttest.RootCertificate`, never
+  `Application` config). `key_id` (the app-supplied key identifier, base64)
+  is part of this seam's agreed shape (architecture #174) but not itself
+  checked by ticket #168's scope.
 
   Returns `{:ok, attested}` with the device's public key and start Counter
   for the caller to persist, or `{:error, rejection}`.
   """
   @spec validate(binary(), String.t(), binary(), String.t(), RootCertificate.der()) ::
           {:ok, attested()} | {:error, rejection()}
-  def validate(attestation_object, key_id, challenge, app_id, root) do
+  def validate(attestation_object, _key_id, challenge, app_id, root) do
     with {:ok, decoded, _rest} <- CBOR.decode(attestation_object),
          %{"fmt" => "apple-appattest", "attStmt" => att_stmt, "authData" => auth_data_tag} =
            decoded,
          auth_data = unwrap_bytes(auth_data_tag),
-         chain = Enum.map(att_stmt["x5c"], &unwrap_bytes/1),
+         chain = unwrap_chain(att_stmt["x5c"]),
          [leaf_der | _] = chain,
          leaf = X509.Certificate.from_der!(leaf_der),
          :ok <- check_trusted_chain(root, chain),
          :ok <- check_nonce(leaf, auth_data, challenge),
          {:ok, authenticator_data} <- AuthenticatorData.parse(auth_data),
-         :ok <- check_app_id(authenticator_data, app_id),
-         :ok <- check_key_id(authenticator_data, key_id) do
+         :ok <- check_app_id(authenticator_data, app_id) do
       {:ok, %{public_key: X509.Certificate.public_key(leaf), counter: authenticator_data.counter}}
     end
   end
@@ -86,17 +86,16 @@ defmodule AppAttest.Attestation do
     end
   end
 
-  defp check_key_id(%AuthenticatorData{credential_id: credential_id}, key_id) do
-    if credential_id && Base.encode64(credential_id) == key_id do
-      :ok
-    else
-      {:error, :key_id_mismatch}
-    end
-  end
-
   # This `cbor` package wraps every decoded CBOR byte string (the format
   # Apple uses for authData, each x5c certificate and the receipt) in a
   # `%CBOR.Tag{tag: :bytes, value: binary}`, rather than handing back the
   # raw binary directly (its own README explains why).
   defp unwrap_bytes(%CBOR.Tag{tag: :bytes, value: value}), do: value
+
+  @doc false
+  # Shared with `AppAttest.Fixtures.certificate_chain/0`, so a fixture built
+  # from a real attestation object and this module's own chain extraction
+  # can never drift apart (duplication finding on #168).
+  @spec unwrap_chain(list()) :: [RootCertificate.der()]
+  def unwrap_chain(x5c), do: Enum.map(x5c, &unwrap_bytes/1)
 end

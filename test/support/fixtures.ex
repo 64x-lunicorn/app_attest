@@ -45,7 +45,7 @@ defmodule AppAttest.Fixtures do
   @spec certificate_chain() :: [AppAttest.RootCertificate.der(), ...]
   def certificate_chain do
     {:ok, %{"attStmt" => %{"x5c" => x5c}}, _rest} = CBOR.decode(attestation())
-    Enum.map(x5c, fn %CBOR.Tag{tag: :bytes, value: der} -> der end)
+    AppAttest.Attestation.unwrap_chain(x5c)
   end
 
   @doc "This Attestation's App ID: `\"<Team ID>.<bundle ID>\"`."
