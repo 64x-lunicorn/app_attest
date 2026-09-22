@@ -1,0 +1,48 @@
+app_attest
+Copyright (c) 2026 64x-lunicorn
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This product bundles the following third-party test data, which is licensed
+separately as noted below.
+
+--------------------------------------------------------------------------
+
+test/support/fixtures/attestation-development.json
+
+From uebelack/node-app-attest (https://github.com/uebelack/node-app-attest),
+test/fixtures/attestation-development.json: a real, Apple-issued
+development-environment Attestation, reused as test data for
+AppAttest.Attestation (#168).
+
+MIT License
+
+Copyright (c) 2024 David Übelacker
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+--------------------------------------------------------------------------
+
+lib/app_attest/root_certificate.ex
+
+Apple's own "Apple App Attestation Root CA" certificate is compiled in as
+public data, published by Apple at
+https://www.apple.com/certificateauthority/Apple_App_Attestation_Root_CA.pem,
+and cross-checked byte-for-byte against the copies bundled with
+takimoto3/app-attest and uebelack/node-app-attest above.
