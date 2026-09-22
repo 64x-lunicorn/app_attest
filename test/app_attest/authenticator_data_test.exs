@@ -48,4 +48,14 @@ defmodule AppAttest.AuthenticatorDataTest do
       assert AuthenticatorData.parse(data) == {:error, :invalid_authenticator_data}
     end
   end
+
+  describe "environment/1" do
+    test "identifies Apple's development aaguid as the development environment" do
+      assert AuthenticatorData.environment("appattestdevelop") == :development
+    end
+
+    test "identifies Apple's production aaguid as the production environment" do
+      assert AuthenticatorData.environment("appattest" <> <<0, 0, 0, 0, 0, 0, 0>>) == :production
+    end
+  end
 end

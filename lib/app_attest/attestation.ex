@@ -6,14 +6,19 @@ defmodule AppAttest.Attestation do
   expected app.
 
   `app_attest` holds no device state itself (CLAUDE.md, Corridor ADR
-  0006, #174): `validate/5` returns the device's public key and start
-  Counter for the caller to persist; it persists nothing on its own.
+  0006, #174): `validate/5` returns the device's public key, start Counter
+  and App Attest environment for the caller to persist; it persists
+  nothing on its own.
   """
 
   alias AppAttest.{AuthenticatorData, RootCertificate}
 
   @typedoc "The result of a successful Attestation: what the caller now persists."
-  @type attested :: %{public_key: :public_key.public_key(), counter: non_neg_integer()}
+  @type attested :: %{
+          public_key: :public_key.public_key(),
+          counter: non_neg_integer(),
+          environment: AuthenticatorData.environment()
+        }
 
   @typedoc """
   * `:untrusted_root` - the certificate chain does not lead to `root`.
@@ -39,8 +44,10 @@ defmodule AppAttest.Attestation do
   is part of this seam's agreed shape (architecture #174) but not itself
   checked by ticket #168's scope.
 
-  Returns `{:ok, attested}` with the device's public key and start Counter
-  for the caller to persist, or `{:error, rejection}`.
+  Returns `{:ok, attested}` with the device's public key, start Counter and
+  App Attest environment (`:development` or `:production`, read from the
+  attestation's own `aaguid`, #170) for the caller to persist, or
+  `{:error, rejection}`.
   """
   @spec validate(binary(), String.t(), binary(), String.t(), RootCertificate.der()) ::
           {:ok, attested()} | {:error, rejection()}
@@ -56,7 +63,12 @@ defmodule AppAttest.Attestation do
          :ok <- check_nonce(leaf, auth_data, challenge),
          {:ok, authenticator_data} <- AuthenticatorData.parse(auth_data),
          :ok <- AuthenticatorData.check_app_id(authenticator_data, app_id) do
-      {:ok, %{public_key: X509.Certificate.public_key(leaf), counter: authenticator_data.counter}}
+      {:ok,
+       %{
+         public_key: X509.Certificate.public_key(leaf),
+         counter: authenticator_data.counter,
+         environment: AuthenticatorData.environment(authenticator_data.aaguid)
+       }}
     end
   end
 

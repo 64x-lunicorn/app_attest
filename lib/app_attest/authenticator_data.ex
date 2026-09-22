@@ -21,6 +21,16 @@ defmodule AppAttest.AuthenticatorData do
 
   defstruct [:app_id_hash, :flags, :counter, :aaguid, :credential_id]
 
+  @typedoc "Which App Attest environment a device was attested in (#170)."
+  @type environment :: :development | :production
+
+  # Apple's own two fixed aaguid values (architecture #174, confirmed against
+  # Apple's "Validating apps that connect to your server" and the Spec's own
+  # reference implementation takimoto3/app-attest): 16 bytes, either the
+  # literal string below or "appattest" padded with seven 0x00 bytes.
+  @aaguid_development "appattestdevelop"
+  @aaguid_production "appattest" <> <<0, 0, 0, 0, 0, 0, 0>>
+
   @typedoc """
   * `:app_id_hash` - SHA-256 of the app's App ID; called `rpIdHash` in
     Apple's own wire format, renamed here to the Spec's own term.
@@ -87,6 +97,16 @@ defmodule AppAttest.AuthenticatorData do
       {:error, :app_id_mismatch}
     end
   end
+
+  @doc """
+  The App Attest environment identified by `aaguid`, as carried in an
+  Attestation's `attestedCredentialData` (#170): `:development` for
+  `"appattestdevelop"`, `:production` for `"appattest"` padded with seven
+  0x00 bytes — Apple's own two fixed values, nothing else.
+  """
+  @spec environment(binary()) :: environment()
+  def environment(@aaguid_development), do: :development
+  def environment(@aaguid_production), do: :production
 
   @doc false
   # Shared with `AppAttest.Attestation` and `AppAttest.Assertion`: the `cbor`
