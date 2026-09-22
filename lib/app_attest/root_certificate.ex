@@ -32,6 +32,32 @@ defmodule AppAttest.RootCertificate do
   -----END CERTIFICATE-----
   """
 
+  # Apple's own general-purpose "Apple Root CA - G3", published at
+  # https://www.apple.com/certificateauthority/AppleRootCA-G3.cer.
+  # App Attest *receipts* (the risk metric, #171) chain to this root, not
+  # `default/0`'s own App Attest-specific one: confirmed against Apple's own
+  # "Assessing fraud risk" documentation, which names this exact certificate
+  # as the trust anchor for a receipt's own signature - architecture #174's
+  # implementation notes assumed the same root as Attestation before this
+  # was checked against Apple's primary source.
+  @apple_root_ca_g3_pem """
+  -----BEGIN CERTIFICATE-----
+  MIICQzCCAcmgAwIBAgIILcX8iNLFS5UwCgYIKoZIzj0EAwMwZzEbMBkGA1UEAwwS
+  QXBwbGUgUm9vdCBDQSAtIEczMSYwJAYDVQQLDB1BcHBsZSBDZXJ0aWZpY2F0aW9u
+  IEF1dGhvcml0eTETMBEGA1UECgwKQXBwbGUgSW5jLjELMAkGA1UEBhMCVVMwHhcN
+  MTQwNDMwMTgxOTA2WhcNMzkwNDMwMTgxOTA2WjBnMRswGQYDVQQDDBJBcHBsZSBS
+  b290IENBIC0gRzMxJjAkBgNVBAsMHUFwcGxlIENlcnRpZmljYXRpb24gQXV0aG9y
+  aXR5MRMwEQYDVQQKDApBcHBsZSBJbmMuMQswCQYDVQQGEwJVUzB2MBAGByqGSM49
+  AgEGBSuBBAAiA2IABJjpLz1AcqTtkyJygRMc3RCV8cWjTnHcFBbZDuWmBSp3ZHtf
+  TjjTuxxEtX/1H7YyYl3J6YRbTzBPEVoA/VhYDKX1DyxNB0cTddqXl5dvMVztK517
+  IDvYuVTZXpmkOlEKMaNCMEAwHQYDVR0OBBYEFLuw3qFYM4iapIqZ3r6966/ayySr
+  MA8GA1UdEwEB/wQFMAMBAf8wDgYDVR0PAQH/BAQDAgEGMAoGCCqGSM49BAMDA2gA
+  MGUCMQCD6cHEFl4aXTQY2e3v9GwOAEZLuN+yRhHFD/3meoyhpmvOwgPUnPWTxnS4
+  at+qIxUCMG1mihDK1A3UT82NQz60imOlM27jbdoXt2QfyFMm+YhidDkLF1vLUagM
+  6BgD56KyKA==
+  -----END CERTIFICATE-----
+  """
+
   @typedoc "A DER-encoded X.509 certificate."
   @type der :: binary()
 
@@ -41,6 +67,19 @@ defmodule AppAttest.RootCertificate do
   @spec default() :: der()
   def default do
     @apple_app_attest_root_ca_pem
+    |> X509.Certificate.from_pem!()
+    |> X509.Certificate.to_der()
+  end
+
+  @doc """
+  Apple's real, compiled-in "Apple Root CA - G3" certificate, DER-encoded:
+  the trust anchor for an App Attest receipt's own signature
+  (`AppAttest.RiskMetric`, #171), never for an Attestation's or Assertion's
+  own chain (`default/0`).
+  """
+  @spec apple_root_ca_g3() :: der()
+  def apple_root_ca_g3 do
+    @apple_root_ca_g3_pem
     |> X509.Certificate.from_pem!()
     |> X509.Certificate.to_der()
   end

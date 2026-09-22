@@ -13,13 +13,11 @@ defmodule AppAttest.IntegrationTest do
   for a bug in its own setup. A later ticket removes one test's `pending` tag
   at a time as it builds the behaviour that test names (order: #175).
 
-  The RiskMetric fixture below is still placeholder data, not a real
-  receipt: that ticket's own scope (#171) is not yet built. The exact shape
-  of what `validate/N` and `fetch/3` accept and return is this harness's
-  own first draft, taken from architecture #174's Flow diagram; the ticket
-  that first makes a test pass may still adjust it — #168 did, for
-  `AppAttest.Attestation.validate/5`: it takes the raw, CBOR-encoded
-  attestation object Apple's SDK produces, so its own fixtures
+  The exact shape of what `validate/N` and `fetch/N` accept and return was
+  this harness's own first draft, taken from architecture #174's Flow
+  diagram; the ticket that first made a test pass was free to adjust it —
+  #168 did, for `AppAttest.Attestation.validate/5`: it takes the raw,
+  CBOR-encoded attestation object Apple's SDK produces, so its own fixtures
   (`AppAttest.Fixtures`, `test/support/`) are a real, Apple-issued
   development Attestation, reused under MIT license from
   uebelack/node-app-attest (Spec #166's own domain rule 6: proven against
@@ -32,7 +30,14 @@ defmodule AppAttest.IntegrationTest do
   `AppAttest.Assertion.validate/6`: it takes the environment the caller
   expects for this request as its own trailing parameter, compared against
   the stored environment #168 recorded, rather than the placeholder's
-  approximation of that shape.
+  approximation of that shape. #171 did too, for `AppAttest.RiskMetric.
+  fetch/5`: the placeholder guessed a per-device lookup keyed by #168's key
+  ID; #171's own primary-source check of Apple's "Assessing fraud risk"
+  documentation found the real request keyed by the device's current
+  *receipt* instead, with an explicit `root` (mirroring
+  `AppAttest.Attestation.validate/5`'s own) and an `opts[:transport]` seam
+  standing in for Apple's own endpoint - domain rule 6 names Attestations
+  only, so `AppAttest.Fixtures.receipt/2`'s receipt is self-signed too.
   """
 
   use ExUnit.Case, async: true
@@ -169,28 +174,40 @@ defmodule AppAttest.IntegrationTest do
   end
 
   describe "Risk metric (built by #171)" do
-    @tag pending: "AppAttest.RiskMetric does not exist yet (#171)"
     test "The risk metric never changes a validation outcome" do
       device = stored_device(41)
-      assertion = %{counter: 42, app_id_hash: @app_id}
-      device_check_key = %{key_id: "device-check-key-id", key: "device-check-private-key"}
+      assertion = AppAttest.Fixtures.assertion(42, @app_id, device.private_key)
 
       # A genuine assertion that would otherwise be accepted...
-      assert {:ok, %{counter: 42}} =
+      assert {:ok, 42} =
                AppAttest.Assertion.validate(
                  assertion,
+                 @app_id,
                  device.public_key,
                  device.counter,
                  device.environment,
                  device.environment
                )
 
-      # ...stays accepted no matter what Apple's risk metric says: fetching it
-      # is a separate call the caller records, never an input to validate/5.
-      # Simulating "a high number of distinct devices" needs a controllable
-      # stand-in for Apple's own endpoint, which is #171's to build.
-      assert {:ok, _risk_metric} =
-               AppAttest.RiskMetric.fetch(device.key_id, device.environment, device_check_key)
+      # ...stays accepted no matter what Apple's risk metric says: fetching
+      # it is a separate call the caller records, never an input to
+      # validate/6. "A high number of distinct devices" is a receipt
+      # fixture carrying that value in Apple's own risk-metric field,
+      # handed back by a stand-in for Apple's own endpoint
+      # (`AppAttest.RiskMetric`'s own `opts[:transport]` seam).
+      chain = AppAttest.Fixtures.risk_metric_chain()
+      a_high_number_of_distinct_devices = 99
+      receipt = AppAttest.Fixtures.receipt(a_high_number_of_distinct_devices, chain)
+      transport = fn _request -> {:ok, 200, Base.encode64(receipt)} end
+
+      assert {:ok, %{risk_metric: ^a_high_number_of_distinct_devices}} =
+               AppAttest.RiskMetric.fetch(
+                 _previous_receipt = "device's-currently-stored-receipt",
+                 device.environment,
+                 AppAttest.Fixtures.device_check_key(),
+                 chain.root,
+                 transport: transport
+               )
     end
   end
 

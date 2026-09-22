@@ -112,4 +112,141 @@ defmodule AppAttest.Fixtures do
       "authenticatorData" => %CBOR.Tag{tag: :bytes, value: auth_data}
     })
   end
+
+  @doc """
+  A throwaway root and leaf certificate pair standing in for a receipt's
+  real chain to Apple's own "Apple Root CA - G3"
+  (`AppAttest.RootCertificate.apple_root_ca_g3/0`, #171): `root` is the
+  substitute trusted root a test passes to `AppAttest.RiskMetric.fetch/5`
+  in place of the real one; `leaf` and `leaf_key` sign a receipt built by
+  `receipt/2`. Issued from one another rather than self-signed like
+  `untrusted_root/0`, because `AppAttest.RiskMetric` finds the signer
+  among a receipt's own embedded certificates instead of assuming there is
+  only one to check.
+  """
+  @spec risk_metric_chain() :: %{
+          root: AppAttest.RootCertificate.der(),
+          leaf: AppAttest.RootCertificate.der(),
+          leaf_key: X509.PrivateKey.t()
+        }
+  def risk_metric_chain do
+    root_key = X509.PrivateKey.new_ec(:secp256r1)
+
+    root_cert =
+      X509.Certificate.self_signed(root_key, "/CN=Test Receipt Root", template: :root_ca)
+
+    leaf_key = X509.PrivateKey.new_ec(:secp256r1)
+
+    leaf_cert =
+      X509.Certificate.new(
+        X509.PublicKey.derive(leaf_key),
+        "/CN=Test Receipt Signer",
+        root_cert,
+        root_key
+      )
+
+    %{
+      root: X509.Certificate.to_der(root_cert),
+      leaf: X509.Certificate.to_der(leaf_cert),
+      leaf_key: leaf_key
+    }
+  end
+
+  @doc """
+  A fresh DeviceCheck key fixture (#171), standing in for a real key
+  downloaded from the Apple Developer portal.
+  """
+  @spec device_check_key() :: AppAttest.RiskMetric.device_check_key()
+  def device_check_key do
+    %{
+      key_id: "DEVICECHECKKEY01",
+      team_id: "TEAMID12345",
+      private_key: X509.PrivateKey.new_ec(:secp256r1)
+    }
+  end
+
+  @doc """
+  A self-signed CMS/PKCS#7 receipt (#171) carrying `risk_metric` in
+  Apple's own field 17 (`AppAttest.RiskMetric`'s own moduledoc), signed by
+  `chain.leaf_key` over `chain.leaf` (`risk_metric_chain/0`).
+
+  No PKCS#7/CMS-signing Hex package exists to build this with, so this
+  shells out to the system `openssl cms` — the same tool this ticket's own
+  implementation used to confirm `AppAttest.RiskMetric`'s parsing against a
+  standards-compliant signature, not only against itself. `AppAttest.
+  RiskMetric` itself only ever *decodes* a receipt (Apple's own job is to
+  build one), so it has no matching encoder of its own to reuse here.
+  """
+  @spec receipt(non_neg_integer(), %{leaf: binary(), leaf_key: X509.PrivateKey.t()}) :: binary()
+  def receipt(risk_metric, %{leaf: leaf_der, leaf_key: leaf_key}) do
+    id = System.unique_integer([:positive])
+    tmp_path = fn suffix -> Path.join(System.tmp_dir!(), "app_attest_receipt_#{id}_#{suffix}") end
+
+    payload_path = tmp_path.("payload.der")
+    leaf_path = tmp_path.("leaf.pem")
+    key_path = tmp_path.("key.pem")
+    out_path = tmp_path.("receipt.der")
+
+    File.write!(payload_path, receipt_payload(risk_metric))
+    File.write!(leaf_path, leaf_der |> X509.Certificate.from_der!() |> X509.Certificate.to_pem())
+    File.write!(key_path, X509.PrivateKey.to_pem(leaf_key))
+
+    {_output, 0} =
+      System.cmd("openssl", [
+        "cms",
+        "-sign",
+        "-in",
+        payload_path,
+        "-inform",
+        "DER",
+        "-outform",
+        "DER",
+        "-binary",
+        "-noattr",
+        "-signer",
+        leaf_path,
+        "-inkey",
+        key_path,
+        "-nodetach",
+        "-out",
+        out_path
+      ])
+
+    receipt = File.read!(out_path)
+    Enum.each([payload_path, leaf_path, key_path, out_path], &File.rm/1)
+    receipt
+  end
+
+  # Apple's own receipt payload, undocumented by any ASN.1 module:
+  # `SET OF SEQUENCE { type INTEGER, version INTEGER, value OCTET STRING }`
+  # (`AppAttest.RiskMetric`'s own moduledoc). Field 6 ("Receipt Type") is
+  # always "RECEIPT" for a receipt fetched this way, never "ATTEST" (the
+  # value the one that accompanies an Attestation object carries).
+  defp receipt_payload(risk_metric) do
+    der_set([
+      der_attribute(6, "RECEIPT"),
+      der_attribute(17, Integer.to_string(risk_metric))
+    ])
+  end
+
+  defp der_attribute(field, value) do
+    der_sequence(der_integer(field) <> der_integer(1) <> der_octet_string(value))
+  end
+
+  defp der_set(elements), do: der_tlv(0x31, Enum.join(elements))
+  defp der_sequence(content), do: der_tlv(0x30, content)
+  defp der_octet_string(value), do: der_tlv(0x04, value)
+
+  defp der_integer(value) do
+    bytes = :binary.encode_unsigned(value)
+    # DER integers are signed: a value whose top bit is already set needs a
+    # leading zero byte so it is not read back as negative.
+    bytes = if :binary.first(bytes) >= 0x80, do: <<0>> <> bytes, else: bytes
+    der_tlv(0x02, bytes)
+  end
+
+  defp der_tlv(tag, content), do: <<tag>> <> der_length(byte_size(content)) <> content
+
+  # Short form only: every value this module builds is a handful of bytes.
+  defp der_length(length) when length < 128, do: <<length>>
 end

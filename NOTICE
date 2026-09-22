@@ -46,3 +46,10 @@ public data, published by Apple at
 https://www.apple.com/certificateauthority/Apple_App_Attestation_Root_CA.pem,
 and cross-checked byte-for-byte against the copies bundled with
 takimoto3/app-attest and uebelack/node-app-attest above.
+
+Apple's own "Apple Root CA - G3" certificate (#171, the root an App Attest
+receipt's own signature chains to) is compiled in the same way, published
+by Apple at
+https://www.apple.com/certificateauthority/AppleRootCA-G3.cer, and
+cross-checked byte-for-byte against the copy bundled with
+takimoto3/app-attest's own fraud/receipt/testdata/AppleRootCA-G3.cer.

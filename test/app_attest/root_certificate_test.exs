@@ -15,6 +15,18 @@ defmodule AppAttest.RootCertificateTest do
     end
   end
 
+  describe "apple_root_ca_g3/0" do
+    test "is Apple's own general-purpose root, not the App Attest one" do
+      subject =
+        RootCertificate.apple_root_ca_g3()
+        |> X509.Certificate.from_der!()
+        |> X509.Certificate.subject()
+        |> X509.RDNSequence.get_attr(:commonName)
+
+      assert subject == ["Apple Root CA - G3"]
+    end
+  end
+
   describe "trusted?/2" do
     test "is true for a real Attestation's chain against Apple's real root" do
       # This also proves an expired chain is not rejected for that alone:
