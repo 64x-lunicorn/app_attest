@@ -13,12 +13,17 @@ defmodule AppAttest.IntegrationTest do
   for a bug in its own setup. A later ticket removes one test's `pending` tag
   at a time as it builds the behaviour that test names (order: #175).
 
-  The fixtures below are placeholder data, not real CBOR or X.509 bytes: this
-  ticket's own scope is the harness and the pending scenarios, not the wire
-  format (architecture #174, "Touches"). The exact shape of what `validate/5`
-  and `fetch/3` accept and return is this harness's own first draft, taken
-  from architecture #174's Flow diagram; the ticket that first makes a test
-  pass may still adjust it.
+  The Assertion, RiskMetric and dev/prod fixtures below are still placeholder
+  data, not real CBOR or X.509 bytes: those tickets' own scope is not yet
+  built. The exact shape of what `validate/5` and `fetch/3` accept and return
+  is this harness's own first draft, taken from architecture #174's Flow
+  diagram; the ticket that first makes a test pass may still adjust it —
+  #168 did, for `AppAttest.Attestation.validate/5`: it takes the raw,
+  CBOR-encoded attestation object Apple's SDK produces, so its own fixtures
+  (`AppAttest.Fixtures`, `test/support/`) are a real, Apple-issued
+  development Attestation, reused under MIT license from
+  uebelack/node-app-attest (Spec #166's own domain rule 6: proven against
+  Attestations Apple actually issued, not only self-generated data).
   """
 
   use ExUnit.Case, async: true
@@ -26,83 +31,53 @@ defmodule AppAttest.IntegrationTest do
   # A representative App ID: <Team ID>.<bundle ID>, per Apple's own format.
   @app_id "TEAMID12345.de.lunicorn.corridor"
   @key_id "device-key-id"
-  @challenge "server-issued-challenge"
-  @apple_root :apple_app_attest_root
 
   defp stored_device(counter, environment \\ :development) do
     %{key_id: @key_id, public_key: :device_public_key, counter: counter, environment: environment}
   end
 
   describe "Attestation (built by #168)" do
-    @tag pending: "AppAttest.Attestation does not exist yet (#168)"
     test "A genuine attestation is accepted" do
-      attestation = %{
-        certificate_chain: :leads_to_apple_app_attest_root,
-        nonce: @challenge,
-        app_id_hash: @app_id
-      }
-
       assert {:ok, %{public_key: _public_key, counter: _start_counter}} =
                AppAttest.Attestation.validate(
-                 attestation,
-                 @key_id,
-                 @challenge,
-                 @app_id,
-                 @apple_root
+                 AppAttest.Fixtures.attestation(),
+                 AppAttest.Fixtures.key_id(),
+                 AppAttest.Fixtures.challenge(),
+                 AppAttest.Fixtures.app_id(),
+                 AppAttest.RootCertificate.default()
                )
     end
 
-    @tag pending: "AppAttest.Attestation does not exist yet (#168)"
     test "An attestation with an untrusted certificate chain is rejected" do
-      attestation = %{
-        certificate_chain: :leads_to_an_untrusted_root,
-        nonce: @challenge,
-        app_id_hash: @app_id
-      }
-
       assert {:error, :untrusted_root} =
                AppAttest.Attestation.validate(
-                 attestation,
-                 @key_id,
-                 @challenge,
-                 @app_id,
-                 @apple_root
+                 AppAttest.Fixtures.attestation(),
+                 AppAttest.Fixtures.key_id(),
+                 AppAttest.Fixtures.challenge(),
+                 AppAttest.Fixtures.app_id(),
+                 AppAttest.Fixtures.untrusted_root()
                )
     end
 
-    @tag pending: "AppAttest.Attestation does not exist yet (#168)"
     test "An attestation with a wrong nonce is rejected" do
-      attestation = %{
-        certificate_chain: :leads_to_apple_app_attest_root,
-        nonce: "a-different-nonce",
-        app_id_hash: @app_id
-      }
-
       assert {:error, :nonce_mismatch} =
                AppAttest.Attestation.validate(
-                 attestation,
-                 @key_id,
-                 @challenge,
-                 @app_id,
-                 @apple_root
+                 AppAttest.Fixtures.attestation(),
+                 AppAttest.Fixtures.key_id(),
+                 "a-different-challenge",
+                 AppAttest.Fixtures.app_id(),
+                 AppAttest.RootCertificate.default()
                )
     end
 
-    @tag pending: "AppAttest.Attestation does not exist yet (#168)"
     test "An attestation with a wrong App ID hash is rejected" do
-      attestation = %{
-        certificate_chain: :leads_to_apple_app_attest_root,
-        nonce: @challenge,
-        app_id_hash: "a-different-app-id-hash"
-      }
-
       assert {:error, :app_id_mismatch} =
                AppAttest.Attestation.validate(
-                 attestation,
-                 @key_id,
-                 @challenge,
-                 @app_id,
-                 @apple_root
+                 AppAttest.Fixtures.attestation(),
+                 AppAttest.Fixtures.key_id(),
+                 AppAttest.Fixtures.challenge(),
+                 "a-different-app-id-hash",
+                 AppAttest.RootCertificate.default()
                )
     end
   end
@@ -202,44 +177,35 @@ defmodule AppAttest.IntegrationTest do
     test "Every rejection case is proven, not only assumed" do
       device = stored_device(41)
 
-      # One self-generated attestation or assertion per specific check this
-      # Spec names, each built to fail exactly that check and nothing else.
+      # One attestation or assertion per specific check this Spec names,
+      # each built to fail exactly that check and nothing else: the three
+      # Attestation ones deliberately mismatch one real Attestation's
+      # challenge, App ID or trusted root at a time (#168); the Assertion
+      # one is #169's own self-generated fixture to build.
       results = %{
         untrusted_root:
           AppAttest.Attestation.validate(
-            %{
-              certificate_chain: :leads_to_an_untrusted_root,
-              nonce: @challenge,
-              app_id_hash: @app_id
-            },
-            @key_id,
-            @challenge,
-            @app_id,
-            @apple_root
+            AppAttest.Fixtures.attestation(),
+            AppAttest.Fixtures.key_id(),
+            AppAttest.Fixtures.challenge(),
+            AppAttest.Fixtures.app_id(),
+            AppAttest.Fixtures.untrusted_root()
           ),
         nonce_mismatch:
           AppAttest.Attestation.validate(
-            %{
-              certificate_chain: :leads_to_apple_app_attest_root,
-              nonce: "a-different-nonce",
-              app_id_hash: @app_id
-            },
-            @key_id,
-            @challenge,
-            @app_id,
-            @apple_root
+            AppAttest.Fixtures.attestation(),
+            AppAttest.Fixtures.key_id(),
+            "a-different-challenge",
+            AppAttest.Fixtures.app_id(),
+            AppAttest.RootCertificate.default()
           ),
         app_id_mismatch:
           AppAttest.Attestation.validate(
-            %{
-              certificate_chain: :leads_to_apple_app_attest_root,
-              nonce: @challenge,
-              app_id_hash: "a-different-app-id-hash"
-            },
-            @key_id,
-            @challenge,
-            @app_id,
-            @apple_root
+            AppAttest.Fixtures.attestation(),
+            AppAttest.Fixtures.key_id(),
+            AppAttest.Fixtures.challenge(),
+            "a-different-app-id-hash",
+            AppAttest.RootCertificate.default()
           ),
         counter_not_increasing:
           AppAttest.Assertion.validate(
