@@ -9,7 +9,7 @@ issues:
   path: null
 ci:
   command: mix ci
-  runtime: { stack: elixir, elixir: "1.20", otp: "29" }
+  runtime: { stack: elixir, elixir: "1.20.4", otp: "29.1" }
   runner: null
   checks:
     - { name: Format, run: mix format --check-formatted, required: true }
