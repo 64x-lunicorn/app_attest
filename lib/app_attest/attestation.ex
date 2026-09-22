@@ -55,7 +55,7 @@ defmodule AppAttest.Attestation do
          :ok <- check_trusted_chain(root, chain),
          :ok <- check_nonce(leaf, auth_data, challenge),
          {:ok, authenticator_data} <- AuthenticatorData.parse(auth_data),
-         :ok <- check_app_id(authenticator_data, app_id) do
+         :ok <- AuthenticatorData.check_app_id(authenticator_data, app_id) do
       {:ok, %{public_key: X509.Certificate.public_key(leaf), counter: authenticator_data.counter}}
     end
   end
@@ -75,14 +75,6 @@ defmodule AppAttest.Attestation do
       :ok
     else
       _no_or_mismatched_nonce -> {:error, :nonce_mismatch}
-    end
-  end
-
-  defp check_app_id(authenticator_data, app_id) do
-    if AuthenticatorData.app_id_matches?(authenticator_data, app_id) do
-      :ok
-    else
-      {:error, :app_id_mismatch}
     end
   end
 

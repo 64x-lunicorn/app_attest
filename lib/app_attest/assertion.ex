@@ -38,7 +38,7 @@ defmodule AppAttest.Assertion do
          auth_data = AuthenticatorData.unwrap_bytes(auth_data_tag),
          {:ok, authenticator_data} <- AuthenticatorData.parse(auth_data),
          :ok <- check_signature(auth_data, signature, public_key),
-         :ok <- check_app_id(authenticator_data, app_id) do
+         :ok <- AuthenticatorData.check_app_id(authenticator_data, app_id) do
       check_counter(authenticator_data, stored_counter)
     end
   end
@@ -48,14 +48,6 @@ defmodule AppAttest.Assertion do
       :ok
     else
       {:error, :invalid_signature}
-    end
-  end
-
-  defp check_app_id(authenticator_data, app_id) do
-    if AuthenticatorData.app_id_matches?(authenticator_data, app_id) do
-      :ok
-    else
-      {:error, :app_id_mismatch}
     end
   end
 

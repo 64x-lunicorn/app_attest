@@ -74,6 +74,20 @@ defmodule AppAttest.AuthenticatorData do
     app_id_hash == :crypto.hash(:sha256, app_id)
   end
 
+  @doc """
+  Checks `authenticator_data`'s App ID hash against `app_id`
+  (`"<Team ID>.<bundle ID>"`), the check both `AppAttest.Attestation` and
+  `AppAttest.Assertion` make identically (duplication finding on #169).
+  """
+  @spec check_app_id(t(), String.t()) :: :ok | {:error, :app_id_mismatch}
+  def check_app_id(authenticator_data, app_id) do
+    if app_id_matches?(authenticator_data, app_id) do
+      :ok
+    else
+      {:error, :app_id_mismatch}
+    end
+  end
+
   @doc false
   # Shared with `AppAttest.Attestation` and `AppAttest.Assertion`: the `cbor`
   # package wraps every decoded CBOR byte string (the format Apple uses for
