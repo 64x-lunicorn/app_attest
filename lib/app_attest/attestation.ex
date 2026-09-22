@@ -24,8 +24,14 @@ defmodule AppAttest.Attestation do
   * `:untrusted_root` - the certificate chain does not lead to `root`.
   * `:nonce_mismatch` - the nonce does not match `challenge`.
   * `:app_id_mismatch` - the App ID hash does not match `app_id`.
+  * `:unrecognized_environment` - the attested credential data's aaguid is
+    neither Apple's development nor production value, or missing entirely.
   """
-  @type rejection :: :untrusted_root | :nonce_mismatch | :app_id_mismatch
+  @type rejection ::
+          :untrusted_root
+          | :nonce_mismatch
+          | :app_id_mismatch
+          | :unrecognized_environment
 
   # Apple's own extension OID for the nonce, carried in the credential
   # certificate (credCert): a DER SEQUENCE containing one element, a
@@ -62,18 +68,26 @@ defmodule AppAttest.Attestation do
          :ok <- check_trusted_chain(root, chain),
          :ok <- check_nonce(leaf, auth_data, challenge),
          {:ok, authenticator_data} <- AuthenticatorData.parse(auth_data),
-         :ok <- AuthenticatorData.check_app_id(authenticator_data, app_id) do
+         :ok <- AuthenticatorData.check_app_id(authenticator_data, app_id),
+         {:ok, environment} <- check_environment(authenticator_data.aaguid) do
       {:ok,
        %{
          public_key: X509.Certificate.public_key(leaf),
          counter: authenticator_data.counter,
-         environment: AuthenticatorData.environment(authenticator_data.aaguid)
+         environment: environment
        }}
     end
   end
 
   defp check_trusted_chain(root, chain) do
     if RootCertificate.trusted?(root, chain), do: :ok, else: {:error, :untrusted_root}
+  end
+
+  defp check_environment(aaguid) do
+    case AuthenticatorData.environment(aaguid) do
+      environment when environment in [:development, :production] -> {:ok, environment}
+      {:error, :unrecognized_environment} = error -> error
+    end
   end
 
   defp check_nonce(leaf, auth_data, challenge) do

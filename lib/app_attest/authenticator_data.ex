@@ -102,11 +102,15 @@ defmodule AppAttest.AuthenticatorData do
   The App Attest environment identified by `aaguid`, as carried in an
   Attestation's `attestedCredentialData` (#170): `:development` for
   `"appattestdevelop"`, `:production` for `"appattest"` padded with seven
-  0x00 bytes — Apple's own two fixed values, nothing else.
+  0x00 bytes — Apple's own two fixed values, nothing else. Anything else,
+  including `nil` (no attested credential data at all), is rejected rather
+  than raising, so a malformed or forged aaguid cannot crash a caller such
+  as `AppAttest.Attestation.validate/5`.
   """
-  @spec environment(binary()) :: environment()
+  @spec environment(binary() | nil) :: environment() | {:error, :unrecognized_environment}
   def environment(@aaguid_development), do: :development
   def environment(@aaguid_production), do: :production
+  def environment(_other), do: {:error, :unrecognized_environment}
 
   @doc false
   # Shared with `AppAttest.Attestation` and `AppAttest.Assertion`: the `cbor`

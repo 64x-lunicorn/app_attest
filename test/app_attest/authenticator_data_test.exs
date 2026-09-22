@@ -57,5 +57,13 @@ defmodule AppAttest.AuthenticatorDataTest do
     test "identifies Apple's production aaguid as the production environment" do
       assert AuthenticatorData.environment("appattest" <> <<0, 0, 0, 0, 0, 0, 0>>) == :production
     end
+
+    test "rejects an aaguid that is neither Apple's development nor production value" do
+      assert AuthenticatorData.environment(<<0::128>>) == {:error, :unrecognized_environment}
+    end
+
+    test "rejects a missing aaguid instead of crashing" do
+      assert AuthenticatorData.environment(nil) == {:error, :unrecognized_environment}
+    end
   end
 end
