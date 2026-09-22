@@ -10,7 +10,7 @@ This repository is greenfield — everything about *what* to build and *why* is 
 
 - [Spec #166](https://github.com/64x-lunicorn/Corridor/issues/166) — domain behaviour and acceptance criteria
 - [Architecture #174](https://github.com/64x-lunicorn/Corridor/issues/174) — component design, decisions, implementation order
-- Tickets, in build order: [#172](https://github.com/64x-lunicorn/Corridor/issues/172) (integration tests) → [#168](https://github.com/64x-lunicorn/Corridor/issues/168) → [#169](https://github.com/64x-lunicorn/Corridor/issues/169) → [#170](https://github.com/64x-lunicorn/Corridor/issues/170) → [#171](https://github.com/64x-lunicorn/Corridor/issues/171)
+- [Wayfinder #175](https://github.com/64x-lunicorn/Corridor/issues/175) — start here for which ticket to pick up next: #172 (integration tests) → #168 → #169 → #170 → #171
 - Licensed Apache-2.0 per [ADR 0008](https://github.com/64x-lunicorn/Corridor/blob/main/docs/adr/0008-the-app-attest-library-is-licensed-apache-2-0.md)
 
 ## Setup still needed
