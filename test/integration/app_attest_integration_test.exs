@@ -13,13 +13,13 @@ defmodule AppAttest.IntegrationTest do
   for a bug in its own setup. A later ticket removes one test's `pending` tag
   at a time as it builds the behaviour that test names (order: #175).
 
-  The RiskMetric and dev/prod fixtures below are still placeholder data, not
-  real CBOR or X.509 bytes: those tickets' own scope (#170, #171) is not yet
-  built. The exact shape of what `validate/N` and `fetch/3` accept and
-  return is this harness's own first draft, taken from architecture #174's
-  Flow diagram; the ticket that first makes a test pass may still adjust it
-  — #168 did, for `AppAttest.Attestation.validate/5`: it takes the raw,
-  CBOR-encoded attestation object Apple's SDK produces, so its own fixtures
+  The RiskMetric fixture below is still placeholder data, not a real
+  receipt: that ticket's own scope (#171) is not yet built. The exact shape
+  of what `validate/N` and `fetch/3` accept and return is this harness's
+  own first draft, taken from architecture #174's Flow diagram; the ticket
+  that first makes a test pass may still adjust it — #168 did, for
+  `AppAttest.Attestation.validate/5`: it takes the raw, CBOR-encoded
+  attestation object Apple's SDK produces, so its own fixtures
   (`AppAttest.Fixtures`, `test/support/`) are a real, Apple-issued
   development Attestation, reused under MIT license from
   uebelack/node-app-attest (Spec #166's own domain rule 6: proven against
@@ -28,8 +28,12 @@ defmodule AppAttest.IntegrationTest do
   environment parameters (#170's to add) and takes the raw, CBOR-encoded
   assertion object Apple's SDK produces; domain rule 6 names Attestations
   only, so its fixtures (`AppAttest.Fixtures.device_key_pair/0` and
-  `assertion/3`) are self-generated instead. A follow-up widened it to
-  `validate/5`: Apple's own on-device API signs every real Assertion over
+  `assertion/3`) are self-generated instead. #170 did too, for
+  `AppAttest.Assertion.validate/6`: it takes the environment the caller
+  expects for this request as its own trailing parameter, compared against
+  the stored environment #168 recorded, rather than the placeholder's
+  approximation of that shape. A follow-up widened it to `validate/7`:
+  Apple's own on-device API signs every real Assertion over
   `authenticatorData` concatenated with a caller-supplied `client_data`'s
   hash, never `authenticatorData` alone (confirmed against Apple's
   "Validating apps that connect to your server" guide and architecture
@@ -58,7 +62,7 @@ defmodule AppAttest.IntegrationTest do
 
   describe "Attestation (built by #168)" do
     test "A genuine attestation is accepted" do
-      assert {:ok, %{public_key: _public_key, counter: _start_counter}} =
+      assert {:ok, %{public_key: _public_key, counter: _start_counter, environment: :development}} =
                AppAttest.Attestation.validate(
                  AppAttest.Fixtures.attestation(),
                  AppAttest.Fixtures.key_id(),
@@ -114,7 +118,9 @@ defmodule AppAttest.IntegrationTest do
                  client_data,
                  @app_id,
                  device.public_key,
-                 device.counter
+                 device.counter,
+                 device.environment,
+                 device.environment
                )
     end
 
@@ -129,7 +135,9 @@ defmodule AppAttest.IntegrationTest do
                  client_data,
                  @app_id,
                  device.public_key,
-                 device.counter
+                 device.counter,
+                 device.environment,
+                 device.environment
                )
     end
 
@@ -144,7 +152,9 @@ defmodule AppAttest.IntegrationTest do
                  client_data,
                  "a-different-app-id",
                  device.public_key,
-                 device.counter
+                 device.counter,
+                 device.environment,
+                 device.environment
                )
     end
 
@@ -165,20 +175,29 @@ defmodule AppAttest.IntegrationTest do
                  "a-different-client-data",
                  @app_id,
                  device.public_key,
-                 device.counter
+                 device.counter,
+                 device.environment,
+                 device.environment
                )
     end
   end
 
   describe "Development vs production (built by #170)" do
-    @tag pending: "AppAttest.Assertion does not separate environments yet (#170)"
     test "A production assertion is never accepted as a development one, or the reverse" do
       device = stored_device(41, :development)
-      assertion = %{counter: 42, app_id_hash: @app_id}
+      client_data = AppAttest.Fixtures.client_data()
+      # Otherwise entirely genuine: right signature, right App ID, an
+      # increasing Counter. Only the caller's expected environment differs
+      # from the one #168 recorded at attestation time, so this proves the
+      # environment check rejects on its own, not by accident alongside
+      # another check.
+      assertion = AppAttest.Fixtures.assertion(42, @app_id, client_data, device.private_key)
 
       assert {:error, :environment_mismatch} =
                AppAttest.Assertion.validate(
                  assertion,
+                 client_data,
+                 @app_id,
                  device.public_key,
                  device.counter,
                  device.environment,
@@ -260,7 +279,9 @@ defmodule AppAttest.IntegrationTest do
             client_data,
             @app_id,
             device.public_key,
-            device.counter
+            device.counter,
+            device.environment,
+            device.environment
           ),
         invalid_signature:
           AppAttest.Assertion.validate(
@@ -273,7 +294,9 @@ defmodule AppAttest.IntegrationTest do
             client_data,
             @app_id,
             device.public_key,
-            device.counter
+            device.counter,
+            device.environment,
+            device.environment
           )
       }
 
