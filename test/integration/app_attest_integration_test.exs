@@ -32,7 +32,14 @@ defmodule AppAttest.IntegrationTest do
   `AppAttest.Assertion.validate/6`: it takes the environment the caller
   expects for this request as its own trailing parameter, compared against
   the stored environment #168 recorded, rather than the placeholder's
-  approximation of that shape.
+  approximation of that shape. A follow-up widened it to `validate/7`:
+  Apple's own on-device API signs every real Assertion over
+  `authenticatorData` concatenated with a caller-supplied `client_data`'s
+  hash, never `authenticatorData` alone (confirmed against Apple's
+  "Validating apps that connect to your server" guide and architecture
+  #174's own reference implementations), so `client_data` joins the
+  parameter list and `AppAttest.Fixtures.assertion/4` signs over the same
+  nonce construction.
   """
 
   use ExUnit.Case, async: true
@@ -102,11 +109,13 @@ defmodule AppAttest.IntegrationTest do
   describe "Assertion (built by #169)" do
     test "A genuine assertion with an increasing Counter is accepted" do
       device = stored_device(41)
-      assertion = AppAttest.Fixtures.assertion(42, @app_id, device.private_key)
+      client_data = AppAttest.Fixtures.client_data()
+      assertion = AppAttest.Fixtures.assertion(42, @app_id, client_data, device.private_key)
 
       assert {:ok, 42} =
                AppAttest.Assertion.validate(
                  assertion,
+                 client_data,
                  @app_id,
                  device.public_key,
                  device.counter,
@@ -117,11 +126,13 @@ defmodule AppAttest.IntegrationTest do
 
     test "A replayed assertion is rejected" do
       device = stored_device(42)
-      assertion = AppAttest.Fixtures.assertion(42, @app_id, device.private_key)
+      client_data = AppAttest.Fixtures.client_data()
+      assertion = AppAttest.Fixtures.assertion(42, @app_id, client_data, device.private_key)
 
       assert {:error, :counter_not_increasing} =
                AppAttest.Assertion.validate(
                  assertion,
+                 client_data,
                  @app_id,
                  device.public_key,
                  device.counter,
@@ -132,12 +143,37 @@ defmodule AppAttest.IntegrationTest do
 
     test "An assertion with a wrong App ID hash is rejected" do
       device = stored_device(41)
-      assertion = AppAttest.Fixtures.assertion(42, @app_id, device.private_key)
+      client_data = AppAttest.Fixtures.client_data()
+      assertion = AppAttest.Fixtures.assertion(42, @app_id, client_data, device.private_key)
 
       assert {:error, :app_id_mismatch} =
                AppAttest.Assertion.validate(
                  assertion,
+                 client_data,
                  "a-different-app-id",
+                 device.public_key,
+                 device.counter,
+                 device.environment,
+                 device.environment
+               )
+    end
+
+    test "An assertion signed for different clientData is rejected" do
+      device = stored_device(41)
+
+      assertion =
+        AppAttest.Fixtures.assertion(
+          42,
+          @app_id,
+          AppAttest.Fixtures.client_data(),
+          device.private_key
+        )
+
+      assert {:error, :invalid_signature} =
+               AppAttest.Assertion.validate(
+                 assertion,
+                 "a-different-client-data",
+                 @app_id,
                  device.public_key,
                  device.counter,
                  device.environment,
@@ -149,16 +185,18 @@ defmodule AppAttest.IntegrationTest do
   describe "Development vs production (built by #170)" do
     test "A production assertion is never accepted as a development one, or the reverse" do
       device = stored_device(41, :development)
+      client_data = AppAttest.Fixtures.client_data()
       # Otherwise entirely genuine: right signature, right App ID, an
       # increasing Counter. Only the caller's expected environment differs
       # from the one #168 recorded at attestation time, so this proves the
       # environment check rejects on its own, not by accident alongside
       # another check.
-      assertion = AppAttest.Fixtures.assertion(42, @app_id, device.private_key)
+      assertion = AppAttest.Fixtures.assertion(42, @app_id, client_data, device.private_key)
 
       assert {:error, :environment_mismatch} =
                AppAttest.Assertion.validate(
                  assertion,
+                 client_data,
                  @app_id,
                  device.public_key,
                  device.counter,
@@ -197,6 +235,7 @@ defmodule AppAttest.IntegrationTest do
   describe "Every rejection is deliberately constructed, not assumed (spans #168 and #169)" do
     test "Every rejection case is proven, not only assumed" do
       device = stored_device(41)
+      client_data = AppAttest.Fixtures.client_data()
       {wrong_private_key, _wrong_public_key} = AppAttest.Fixtures.device_key_pair()
 
       # One attestation or assertion per specific check this Spec names,
@@ -231,7 +270,13 @@ defmodule AppAttest.IntegrationTest do
           ),
         counter_not_increasing:
           AppAttest.Assertion.validate(
-            AppAttest.Fixtures.assertion(device.counter, @app_id, device.private_key),
+            AppAttest.Fixtures.assertion(
+              device.counter,
+              @app_id,
+              client_data,
+              device.private_key
+            ),
+            client_data,
             @app_id,
             device.public_key,
             device.counter,
@@ -240,7 +285,13 @@ defmodule AppAttest.IntegrationTest do
           ),
         invalid_signature:
           AppAttest.Assertion.validate(
-            AppAttest.Fixtures.assertion(device.counter + 1, @app_id, wrong_private_key),
+            AppAttest.Fixtures.assertion(
+              device.counter + 1,
+              @app_id,
+              client_data,
+              wrong_private_key
+            ),
+            client_data,
             @app_id,
             device.public_key,
             device.counter,
