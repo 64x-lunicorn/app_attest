@@ -1,50 +1,44 @@
 defmodule AppAttest.RiskMetric do
   @moduledoc """
-  Fetches Apple's per-device App Attest risk metric (Spec #166, architecture
-  #174), recorded alongside a device but never a reason to accept or reject
-  its Attestation or Assertion (Corridor ADR 0007).
+  Fetches Apple's per-device App Attest risk metric, recorded alongside a
+  device but never a reason to accept or reject its Attestation or
+  Assertion (Corridor ADR 0007).
 
-  Apple's own "Assessing fraud risk" guide (confirmed against it directly,
-  not only architecture #174's own secondary references) frames this as a
-  *receipt exchange*, not a per-device lookup: the caller sends whatever
-  receipt it currently holds — the one embedded in the Attestation's own
+  Apple's own "Assessing fraud risk" guide describes this as a *receipt
+  exchange*, not a per-device lookup: the caller sends whatever receipt it
+  currently holds — the one embedded in the Attestation's own
   `attStmt.receipt` at first, later the one the previous `fetch/5`
   returned — to Apple's server, authenticated with a DeviceCheck JWT, and
-  gets back a new receipt carrying the risk metric. `app_attest` holds no
-  device state itself (CLAUDE.md, Corridor ADR 0006, #174): `fetch/5`
-  returns the new receipt for the caller to persist in place of the one it
-  sent; it persists nothing on its own.
+  gets back a new receipt carrying the risk metric. No key ID appears
+  anywhere in that request. `app_attest` holds no device state itself
+  (Corridor ADR 0006): `fetch/5` returns the new receipt for the caller to
+  persist in place of the one it sent; it persists nothing on its own.
 
-  Two things architecture #174's own implementation notes assumed but this
-  ticket's own primary-source check (Apple's "Assessing fraud risk" page)
-  found otherwise, corrected here rather than left silently wrong:
+  A receipt's signature chains to Apple's general-purpose "Apple Root CA -
+  G3" (`AppAttest.RootCertificate.apple_root_ca_g3/0`), not to the App
+  Attest-specific root an Attestation's own chain uses
+  (`AppAttest.RootCertificate.default/0`).
 
-    * the request identifies the device by its current *receipt*, not by
-      the key ID #168 records — no key ID appears anywhere in Apple's own
-      documented request;
-    * a receipt's signature chains to Apple's general-purpose "Apple Root
-      CA - G3" (`AppAttest.RootCertificate.apple_root_ca_g3/0`), not the
-      App Attest-specific root an Attestation's own chain uses.
+  Each receipt carries its own validity window, which `fetch/5` returns
+  alongside the risk metric: Apple answers a refresh sent before a
+  receipt's Not Before date with `304 Not Modified`, and may not honour one
+  sent after its Expiration Time, so a caller schedules the next `fetch/5`
+  between the two.
 
   The receipt is a PKCS#7/CMS SignedData structure (RFC 5652). No Hex
-  package exists for it (confirmed: neither hex.pm nor `:public_key`'s own
-  documented function list mention one) — but `:public_key`'s `der_decode/2`
-  and `der_encode/2` already dispatch `'ContentInfo'`, `'SignedData'`,
-  `'SignerInfo'` and `'IssuerAndSerialNumber'` to a compiled-in RFC 5652
-  ASN.1 module (`public_key.erl`'s own `get_asn1_module/1`), so this needs
-  no hand-rolled ASN.1 for the CMS envelope itself — only for Apple's own
-  proprietary attribute list inside it, which no ASN.1 module (Apple's or
-  OTP's) describes.
+  package parses one, but `:public_key`'s `der_decode/2` and `der_encode/2`
+  already dispatch `'ContentInfo'`, `'SignedData'`, `'SignerInfo'` and
+  `'IssuerAndSerialNumber'` to a compiled-in RFC 5652 ASN.1 module, so only
+  Apple's own proprietary attribute list inside the envelope — which no
+  ASN.1 module describes — is parsed by hand here.
   """
 
   alias AppAttest.{AuthenticatorData, RootCertificate}
 
   @typedoc """
   The Apple DeviceCheck key that authenticates this request to Apple: an
-  explicit parameter, like `AppAttest.RootCertificate`'s own root (CLAUDE.md:
-  never `Application` config or a compile-time flag), sourced from
-  `app_attest`'s own dev/CI secrets and never Corridor's production one
-  (architecture #174).
+  explicit parameter, like `AppAttest.RootCertificate`'s own root, never
+  `Application` config or a compile-time flag.
 
     * `:key_id` - the 10-character Key ID Apple assigned this key.
     * `:team_id` - the 10-character Apple Developer Team ID (the JWT's
@@ -57,8 +51,25 @@ defmodule AppAttest.RiskMetric do
           private_key: X509.PrivateKey.t()
         }
 
-  @typedoc "What the caller now persists in place of the receipt it sent."
-  @type result :: %{risk_metric: non_neg_integer(), receipt: binary()}
+  @typedoc """
+  What the caller now persists in place of the receipt it sent.
+
+    * `:risk_metric` - Apple's own estimate of how many distinct devices
+      have used this attested key.
+    * `:receipt` - the new receipt, to send on the next refresh.
+    * `:not_before` - the receipt's own Not Before date. Apple answers a
+      refresh sent before it with `304 Not Modified`, so a caller that wants
+      a new receipt waits until this date.
+    * `:expiration_time` - the receipt's own Expiration Time. Apple may
+      refuse to honour a refresh sent after it, so a caller schedules one
+      between the two dates.
+  """
+  @type result :: %{
+          risk_metric: non_neg_integer(),
+          receipt: binary(),
+          not_before: DateTime.t(),
+          expiration_time: DateTime.t()
+        }
 
   @typedoc """
   * `:untrusted_receipt` - the receipt's signature, or its certificate
@@ -96,9 +107,12 @@ defmodule AppAttest.RiskMetric do
   @signed_data_oid {1, 2, 840, 113_549, 1, 7, 2}
   @sha256_oid {2, 16, 840, 1, 101, 3, 4, 2, 1}
 
-  # Apple's own receipt attribute numbers ("Assessing fraud risk"): the one
-  # field this ticket's own Scope needs.
+  # Apple's own receipt attribute numbers ("Assessing fraud risk"): the risk
+  # metric itself, and the two dates that bound when a refresh is worth
+  # sending at all.
   @risk_metric_field 17
+  @not_before_field 19
+  @expiration_time_field 21
 
   # RFC 7518 section 3.4: JWS ES256 wants the signature as a fixed-width
   # r||s pair, one P-256 field element (32 bytes) each.
@@ -110,18 +124,17 @@ defmodule AppAttest.RiskMetric do
   verifies the new receipt Apple returns against `root` — always
   `AppAttest.RootCertificate.apple_root_ca_g3/0` in production; a test
   substitutes its own, the same way `AppAttest.Attestation.validate/5`
-  takes its own root explicitly (architecture #174).
+  takes its own root explicitly.
 
-  `opts[:transport]` replaces the real HTTP call to Apple with a stand-in
-  (`write-tests`: mocking only at this module's own system boundary);
-  every real caller omits it and gets `AppAttest.RiskMetric`'s own
-  `:httpc`-based default.
+  `opts[:transport]` replaces the real HTTP call to Apple with a stand-in,
+  this module's only system boundary; every real caller omits it and gets
+  `AppAttest.RiskMetric`'s own `:httpc`-based default.
 
-  Returns `{:ok, result}` with the risk metric and the new receipt to
-  persist in place of the one sent, for the caller's next refresh, or
-  `{:error, rejection}`. Never affects whether an Attestation or Assertion
-  is accepted (Corridor ADR 0007) — nothing in this module is an input to
-  either's own `validate/N`.
+  Returns `{:ok, result}` with the risk metric, the new receipt to persist
+  in place of the one sent, and that receipt's own validity window for
+  timing the next refresh, or `{:error, rejection}`. Never affects whether
+  an Attestation or Assertion is accepted (Corridor ADR 0007) — nothing in
+  this module is an input to either's own `validate/N`.
   """
   @spec fetch(
           binary(),
@@ -142,8 +155,8 @@ defmodule AppAttest.RiskMetric do
     case transport.(request) do
       {:ok, 200, body} ->
         with {:ok, new_receipt} <- decode_base64(body),
-             {:ok, risk_metric} <- verify_and_extract(new_receipt, root) do
-          {:ok, %{risk_metric: risk_metric, receipt: new_receipt}}
+             {:ok, fields} <- verify_and_extract(new_receipt, root) do
+          {:ok, Map.put(fields, :receipt, new_receipt)}
         end
 
       {:ok, status, body} ->
@@ -249,14 +262,49 @@ defmodule AppAttest.RiskMetric do
          true <- RootCertificate.trusted?(root, chain),
          signer_public_key = leaf_public_key(chain),
          true <- :public_key.verify(econtent, :sha256, signature, signer_public_key),
-         {:ok, attributes} <- parse_attributes(econtent),
-         {:ok, risk_metric} <- Map.fetch(attributes, @risk_metric_field) do
-      {:ok, String.to_integer(risk_metric)}
+         {:ok, attributes} <- parse_attributes(econtent) do
+      extract_fields(attributes)
     else
       false -> {:error, :untrusted_receipt}
       :error -> {:error, :invalid_receipt}
       {:error, _reason} = error -> error
       _malformed -> {:error, :invalid_receipt}
+    end
+  end
+
+  defp extract_fields(attributes) do
+    with {:ok, risk_metric} <- field(attributes, @risk_metric_field),
+         {:ok, risk_metric} <- integer_value(risk_metric),
+         {:ok, not_before} <- field(attributes, @not_before_field),
+         {:ok, not_before} <- timestamp_value(not_before),
+         {:ok, expiration_time} <- field(attributes, @expiration_time_field),
+         {:ok, expiration_time} <- timestamp_value(expiration_time) do
+      {:ok, %{risk_metric: risk_metric, not_before: not_before, expiration_time: expiration_time}}
+    end
+  end
+
+  defp field(attributes, number) do
+    case Map.fetch(attributes, number) do
+      {:ok, value} -> {:ok, value}
+      :error -> {:error, :invalid_receipt}
+    end
+  end
+
+  defp integer_value(value) do
+    case Integer.parse(value) do
+      {integer, ""} -> {:ok, integer}
+      _not_a_number -> {:error, :invalid_receipt}
+    end
+  end
+
+  # Apple's own receipt date fields carry an RFC 3339 timestamp as ASCII
+  # (confirmed against takimoto3/app-attest's own
+  # `fraud/receipt/receipt.go`, which parses the neighbouring Creation Time
+  # field the same way).
+  defp timestamp_value(value) do
+    case DateTime.from_iso8601(value) do
+      {:ok, timestamp, _utc_offset} -> {:ok, timestamp}
+      {:error, _reason} -> {:error, :invalid_receipt}
     end
   end
 
@@ -307,46 +355,76 @@ defmodule AppAttest.RiskMetric do
   # still has to be walked past correctly to reach the ones after it, so
   # this parses every attribute present, keyed by its own field number,
   # rather than searching only for field 17.
+  #
+  # Every parser below has a catch-all clause and returns
+  # `{:error, :invalid_receipt}` rather than raising: a receipt's signature
+  # and certificate chain say nothing about whether the bytes inside parse,
+  # so a correctly signed receipt whose payload is truncated still has to
+  # come back out of `fetch/5` as the documented rejection.
+
   defp parse_attributes(<<0x31, rest::binary>>) do
-    {length, rest} = der_length(rest)
-    <<attributes::binary-size(^length), _extra::binary>> = rest
-    {:ok, parse_attribute_list(attributes, %{})}
+    with {:ok, length, rest} <- der_length(rest),
+         <<attributes::binary-size(^length), _extra::binary>> <- rest do
+      parse_attribute_list(attributes, %{})
+    else
+      _malformed -> {:error, :invalid_receipt}
+    end
   end
 
   defp parse_attributes(_malformed), do: {:error, :invalid_receipt}
 
-  defp parse_attribute_list(<<>>, attributes), do: attributes
+  defp parse_attribute_list(<<>>, attributes), do: {:ok, attributes}
 
   defp parse_attribute_list(<<0x30, rest::binary>>, attributes) do
-    {length, rest} = der_length(rest)
-    <<sequence::binary-size(^length), remaining::binary>> = rest
-    {field, value} = parse_attribute(sequence)
-    parse_attribute_list(remaining, Map.put(attributes, field, value))
+    with {:ok, length, rest} <- der_length(rest),
+         <<sequence::binary-size(^length), remaining::binary>> <- rest,
+         {:ok, field, value} <- parse_attribute(sequence) do
+      parse_attribute_list(remaining, Map.put(attributes, field, value))
+    else
+      _malformed -> {:error, :invalid_receipt}
+    end
   end
+
+  defp parse_attribute_list(_malformed, _attributes), do: {:error, :invalid_receipt}
 
   defp parse_attribute(<<0x02, rest::binary>>) do
-    {field, rest} = der_integer(rest)
-    <<0x02, rest::binary>> = rest
-    {_version, rest} = der_integer(rest)
-    <<0x04, rest::binary>> = rest
-    {length, rest} = der_length(rest)
-    <<value::binary-size(^length), _rest::binary>> = rest
-    {field, value}
+    with {:ok, field, rest} <- der_integer(rest),
+         <<0x02, rest::binary>> <- rest,
+         {:ok, _version, rest} <- der_integer(rest),
+         <<0x04, rest::binary>> <- rest,
+         {:ok, length, rest} <- der_length(rest),
+         <<value::binary-size(^length), _rest::binary>> <- rest do
+      {:ok, field, value}
+    else
+      _malformed -> {:error, :invalid_receipt}
+    end
   end
 
+  defp parse_attribute(_malformed), do: {:error, :invalid_receipt}
+
   defp der_integer(data) do
-    {length, rest} = der_length(data)
-    <<value::big-unsigned-integer-size(^length)-unit(8), remaining::binary>> = rest
-    {value, remaining}
+    with {:ok, length, rest} <- der_length(data),
+         <<value::big-unsigned-integer-size(^length)-unit(8), remaining::binary>> <- rest do
+      {:ok, value, remaining}
+    else
+      _malformed -> {:error, :invalid_receipt}
+    end
   end
 
   # DER length octets: short form (top bit clear) is the length itself;
   # long form (top bit set) gives, in its low 7 bits, how many following
   # bytes hold the length as a big-endian integer.
-  defp der_length(<<0::1, short_form::7, rest::binary>>), do: {short_form, rest}
+  defp der_length(<<0::1, short_form::7, rest::binary>>), do: {:ok, short_form, rest}
 
   defp der_length(<<1::1, byte_count::7, rest::binary>>) do
-    <<length::big-unsigned-integer-size(^byte_count)-unit(8), remaining::binary>> = rest
-    {length, remaining}
+    case rest do
+      <<length::big-unsigned-integer-size(^byte_count)-unit(8), remaining::binary>> ->
+        {:ok, length, remaining}
+
+      _malformed ->
+        {:error, :invalid_receipt}
+    end
   end
+
+  defp der_length(_malformed), do: {:error, :invalid_receipt}
 end
