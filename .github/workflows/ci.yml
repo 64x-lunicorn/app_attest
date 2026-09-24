@@ -68,9 +68,16 @@ jobs:
       - name: Fetch dependencies
         run: mix deps.get --check-locked
 
+      # The Apple DeviceCheck credentials the `:apple_endpoint` tests need to
+      # reach Apple's real risk-metric endpoint (see CONTRIBUTING.md). They
+      # are absent on a pull request from a fork, and `test_helper.exs` then
+      # excludes those tests rather than failing them.
       - name: Run check
         env:
           CHECK_RUN: ${{ matrix.run }}
+          APPLE_DEVICECHECK_KEY: ${{ secrets.APPLE_DEVICECHECK_KEY }}
+          APPLE_DEVICECHECK_KEY_ID: ${{ vars.APPLE_DEVICECHECK_KEY_ID }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
         run: bash -c "${CHECK_RUN}"
 
   workflows:

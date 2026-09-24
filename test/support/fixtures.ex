@@ -30,6 +30,27 @@ defmodule AppAttest.Fixtures do
   @team_identifier "V8H6LQ9448"
   @bundle_identifier "io.uebelacker.AppAttestExample"
 
+  # Apple's own receipt attribute numbers ("Assessing fraud risk", the same
+  # table `AppAttest.RiskMetric` reads). Field 6 ("Receipt Type") is always
+  # "RECEIPT" for a receipt fetched from the risk-metric endpoint, never
+  # "ATTEST" (the value the one accompanying an Attestation object carries).
+  @receipt_type_field 6
+  @risk_metric_field 17
+  @not_before_field 19
+  @expiration_time_field 21
+
+  # Two fixed dates, far enough apart that a test can tell them apart, in the
+  # RFC 3339 form Apple's own receipt date fields use.
+  @receipt_not_before ~U[2026-01-01 00:00:00Z]
+  @receipt_expiration_time ~U[2026-01-08 00:00:00Z]
+
+  # RFC 5652: pkcs7-signedData and id-data, plus the two algorithm OIDs every
+  # receipt this module builds is signed with.
+  @signed_data_oid {1, 2, 840, 113_549, 1, 7, 2}
+  @data_oid {1, 2, 840, 113_549, 1, 7, 1}
+  @sha256_oid {2, 16, 840, 1, 101, 3, 4, 2, 1}
+  @ecdsa_with_sha256_oid {1, 2, 840, 10045, 4, 3, 2}
+
   @doc "The raw, CBOR-encoded Attestation object, as Apple's SDK produced it."
   @spec attestation() :: binary()
   def attestation, do: Base.decode64!(@fixture["attestation"])
@@ -126,4 +147,171 @@ defmodule AppAttest.Fixtures do
       "authenticatorData" => %CBOR.Tag{tag: :bytes, value: auth_data}
     })
   end
+
+  @doc """
+  A throwaway root and leaf certificate pair standing in for a receipt's
+  real chain to Apple's own "Apple Root CA - G3"
+  (`AppAttest.RootCertificate.apple_root_ca_g3/0`, #171): `root` is the
+  substitute trusted root a test passes to `AppAttest.RiskMetric.fetch/5`
+  in place of the real one; `leaf` and `leaf_key` sign a receipt built by
+  `receipt/2`. Issued from one another rather than self-signed like
+  `untrusted_root/0`, because `AppAttest.RiskMetric` finds the signer
+  among a receipt's own embedded certificates instead of assuming there is
+  only one to check.
+  """
+  @spec risk_metric_chain() :: %{
+          root: AppAttest.RootCertificate.der(),
+          leaf: AppAttest.RootCertificate.der(),
+          leaf_key: X509.PrivateKey.t()
+        }
+  def risk_metric_chain do
+    root_key = X509.PrivateKey.new_ec(:secp256r1)
+
+    root_cert =
+      X509.Certificate.self_signed(root_key, "/CN=Test Receipt Root", template: :root_ca)
+
+    leaf_key = X509.PrivateKey.new_ec(:secp256r1)
+
+    leaf_cert =
+      X509.Certificate.new(
+        X509.PublicKey.derive(leaf_key),
+        "/CN=Test Receipt Signer",
+        root_cert,
+        root_key
+      )
+
+    %{
+      root: X509.Certificate.to_der(root_cert),
+      leaf: X509.Certificate.to_der(leaf_cert),
+      leaf_key: leaf_key
+    }
+  end
+
+  @doc """
+  A fresh DeviceCheck key fixture (#171), standing in for a real key
+  downloaded from the Apple Developer portal. Key ID and Team ID are
+  10-character placeholders, the length Apple assigns both
+  (`t:AppAttest.RiskMetric.device_check_key/0`'s own typedoc).
+  """
+  @spec device_check_key() :: AppAttest.RiskMetric.device_check_key()
+  def device_check_key do
+    %{
+      key_id: "DEVCHECK01",
+      team_id: "TEAMID1234",
+      private_key: X509.PrivateKey.new_ec(:secp256r1)
+    }
+  end
+
+  @doc """
+  The receipt embedded in the fixture Attestation's own `attStmt.receipt`:
+  a real, Apple-issued receipt, but one issued to `uebelack/node-app-attest`'s
+  own team and long expired, so Apple answers a risk-metric request carrying
+  it with an error rather than a new receipt
+  (`AppAttest.RiskMetricAppleTest`).
+  """
+  @spec attestation_receipt() :: binary()
+  def attestation_receipt do
+    {:ok, %{"attStmt" => %{"receipt" => %CBOR.Tag{tag: :bytes, value: receipt}}}, _rest} =
+      CBOR.decode(attestation())
+
+    receipt
+  end
+
+  @doc """
+  A self-signed CMS/PKCS#7 receipt (#171) carrying `risk_metric` in Apple's
+  own field 17, and validity dates in its fields 19 and 21
+  (`AppAttest.RiskMetric`'s own moduledoc), signed by `chain.leaf_key` over
+  `chain.leaf` (`risk_metric_chain/0`). `receipt_not_before/0` and
+  `receipt_expiration_time/0` are the two dates it carries.
+  """
+  @spec receipt(non_neg_integer(), %{leaf: binary(), leaf_key: X509.PrivateKey.t()}) :: binary()
+  def receipt(risk_metric, chain) do
+    receipt_with_attributes(chain, [
+      {@receipt_type_field, "RECEIPT"},
+      {@risk_metric_field, Integer.to_string(risk_metric)},
+      {@not_before_field, DateTime.to_iso8601(@receipt_not_before)},
+      {@expiration_time_field, DateTime.to_iso8601(@receipt_expiration_time)}
+    ])
+  end
+
+  @doc "The Not Before date (Apple's field 19) every `receipt/2` carries."
+  @spec receipt_not_before() :: DateTime.t()
+  def receipt_not_before, do: @receipt_not_before
+
+  @doc "The Expiration Time (Apple's field 21) every `receipt/2` carries."
+  @spec receipt_expiration_time() :: DateTime.t()
+  def receipt_expiration_time, do: @receipt_expiration_time
+
+  @doc """
+  A self-signed CMS/PKCS#7 receipt carrying exactly `attributes`, each a
+  `{field number, value}` pair in Apple's own receipt attribute list — what
+  `receipt/2` builds a well-formed receipt out of, and what a test
+  constructs a deliberately malformed one out of, one wrong field at a time.
+
+  No PKCS#7/CMS-signing Hex package exists to build this with, and shelling
+  out to `openssl cms` would need an OpenSSL the stock macOS LibreSSL does
+  not provide. `:public_key`'s own `der_encode/2` dispatches `'ContentInfo'`
+  to the same compiled-in RFC 5652 ASN.1 module that `AppAttest.RiskMetric`
+  already decodes receipts with, so the envelope is built with that instead
+  — no external tool, no temporary files.
+  """
+  @spec receipt_with_attributes(%{leaf: binary(), leaf_key: X509.PrivateKey.t()}, [
+          {non_neg_integer(), binary()}
+        ]) :: binary()
+  def receipt_with_attributes(chain, attributes) do
+    receipt_with_payload(
+      chain,
+      der_set(Enum.map(attributes, fn {field, value} -> der_attribute(field, value) end))
+    )
+  end
+
+  @doc """
+  A self-signed CMS/PKCS#7 receipt whose signed content is exactly
+  `payload` — the envelope `receipt_with_attributes/2` builds, with the
+  attribute list left to the caller, so a test can put a payload that is not
+  a well-formed attribute list at all inside an otherwise genuine,
+  correctly signed receipt.
+  """
+  @spec receipt_with_payload(%{leaf: binary(), leaf_key: X509.PrivateKey.t()}, binary()) ::
+          binary()
+  def receipt_with_payload(%{leaf: leaf_der, leaf_key: leaf_key}, payload) do
+    leaf = X509.Certificate.from_der!(leaf_der)
+    digest_algorithm = {:DigestAlgorithmIdentifier, @sha256_oid, :asn1_NOVALUE}
+
+    signer_info =
+      {:SignerInfo, :v1,
+       {:issuerAndSerialNumber,
+        {:IssuerAndSerialNumber, X509.Certificate.issuer(leaf), X509.Certificate.serial(leaf)}},
+       digest_algorithm, :asn1_NOVALUE,
+       {:SignatureAlgorithmIdentifier, @ecdsa_with_sha256_oid, :asn1_NOVALUE},
+       :public_key.sign(payload, :sha256, leaf_key), :asn1_NOVALUE}
+
+    signed_data =
+      {:SignedData, :v1, [digest_algorithm], {:EncapsulatedContentInfo, @data_oid, payload},
+       [certificate: :public_key.der_decode(:Certificate, leaf_der)], :asn1_NOVALUE,
+       [signer_info]}
+
+    :public_key.der_encode(:ContentInfo, {:ContentInfo, @signed_data_oid, signed_data})
+  end
+
+  defp der_attribute(field, value) do
+    der_sequence(der_integer(field) <> der_integer(1) <> der_octet_string(value))
+  end
+
+  defp der_set(elements), do: der_tlv(0x31, Enum.join(elements))
+  defp der_sequence(content), do: der_tlv(0x30, content)
+  defp der_octet_string(value), do: der_tlv(0x04, value)
+
+  defp der_integer(value) do
+    bytes = :binary.encode_unsigned(value)
+    # DER integers are signed: a value whose top bit is already set needs a
+    # leading zero byte so it is not read back as negative.
+    bytes = if :binary.first(bytes) >= 0x80, do: <<0>> <> bytes, else: bytes
+    der_tlv(0x02, bytes)
+  end
+
+  defp der_tlv(tag, content), do: <<tag>> <> der_length(byte_size(content)) <> content
+
+  # Short form only: every value this module builds is a handful of bytes.
+  defp der_length(length) when length < 128, do: <<length>>
 end
