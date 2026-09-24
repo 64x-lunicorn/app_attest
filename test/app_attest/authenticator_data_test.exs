@@ -9,6 +9,12 @@ defmodule AppAttest.AuthenticatorDataTest do
   @flags 0x40
   @counter 7
 
+  # Apple's nonce for the authenticator data below and this client data,
+  # computed once and written down, so the expectation does not restate the
+  # very construction `nonce/2` is being checked for.
+  @client_data "request-specific-client-data"
+  @expected_nonce "bcc5062801630ae0ac02f6782def3d961b10a6d46b8476a222154adffab28509"
+
   describe "parse/1" do
     test "parses the shared prefix alone, as an Assertion's authenticator data carries it" do
       data = <<@app_id_hash::binary, @flags, @counter::32-big>>
@@ -46,6 +52,27 @@ defmodule AppAttest.AuthenticatorDataTest do
       data = <<@app_id_hash::binary, @flags, @counter::32-big, aaguid::binary, 32::16-big>>
 
       assert AuthenticatorData.parse(data) == {:error, :invalid_authenticator_data}
+    end
+  end
+
+  describe "nonce/2" do
+    test "builds Apple's own nonce, the one an Attestation and an Assertion share" do
+      auth_data = <<@app_id_hash::binary, @flags, @counter::32-big>>
+
+      assert AuthenticatorData.nonce(auth_data, @client_data) ==
+               Base.decode16!(@expected_nonce, case: :lower)
+    end
+  end
+
+  describe "unwrap_bytes/1" do
+    test "unwraps the CBOR byte string Apple's own fields are encoded as" do
+      assert AuthenticatorData.unwrap_bytes(%CBOR.Tag{tag: :bytes, value: "raw"}) == {:ok, "raw"}
+    end
+
+    test "rejects anything that is not a CBOR byte string instead of crashing" do
+      assert AuthenticatorData.unwrap_bytes("a CBOR text string") == :error
+      assert AuthenticatorData.unwrap_bytes(nil) == :error
+      assert AuthenticatorData.unwrap_bytes(%CBOR.Tag{tag: 42, value: "tagged"}) == :error
     end
   end
 

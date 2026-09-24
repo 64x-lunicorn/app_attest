@@ -1,7 +1,7 @@
 defmodule AppAttest.AttestationTest do
   use ExUnit.Case, async: true
 
-  alias AppAttest.Attestation
+  alias AppAttest.{Attestation, Typespecs}
 
   # Apple's own nonce extension OID (architecture #174, `Attestation`'s own
   # `@nonce_extension_oid`): a DER SEQUENCE containing one element, a
@@ -13,6 +13,31 @@ defmodule AppAttest.AttestationTest do
 
   @app_id "TEAMID12345.de.lunicorn.corridor"
   @challenge "server-challenge"
+
+  # A well-formed 37-byte authenticator data prefix, so a test that targets
+  # one malformed field of an Attestation never trips over this one.
+  @auth_data <<:crypto.hash(:sha256, @app_id)::binary, 0, 0::32-big>>
+
+  # Every rejection below happens before the chain is checked against a root,
+  # so which root is passed cannot change the outcome.
+  @any_root <<>>
+
+  # A well-formed `apple-appattest` envelope whose `attStmt` and `authData`
+  # are exactly what the caller passes, so one malformed field at a time can
+  # be put in an otherwise intact Attestation (#212).
+  defp attestation_object(att_stmt, auth_data) do
+    CBOR.encode(%{
+      "fmt" => "apple-appattest",
+      "attStmt" => att_stmt,
+      "authData" => auth_data
+    })
+  end
+
+  defp bytes(value), do: %CBOR.Tag{tag: :bytes, value: value}
+
+  defp validate(attestation_object) do
+    Attestation.validate(attestation_object, "key-id", @challenge, @app_id, @any_root)
+  end
 
   # A self-signed, entirely self-generated attestation object (no real
   # device involved): its authData is only the fixed 37-byte prefix, no
@@ -26,8 +51,7 @@ defmodule AppAttest.AttestationTest do
   # own tests do with a fresh self-signed certificate), so only the nonce
   # and App ID hash need to line up.
   defp self_generated_attestation_without_attested_credential_data do
-    auth_data = <<:crypto.hash(:sha256, @app_id)::binary, 0, 0::32-big>>
-    expected_nonce = :crypto.hash(:sha256, auth_data <> :crypto.hash(:sha256, @challenge))
+    expected_nonce = :crypto.hash(:sha256, @auth_data <> :crypto.hash(:sha256, @challenge))
 
     nonce_extension =
       {:Extension, @nonce_extension_oid, false, @nonce_extension_wrapper <> expected_nonce}
@@ -40,14 +64,7 @@ defmodule AppAttest.AttestationTest do
       )
       |> X509.Certificate.to_der()
 
-    attestation_object =
-      CBOR.encode(%{
-        "fmt" => "apple-appattest",
-        "attStmt" => %{"x5c" => [%CBOR.Tag{tag: :bytes, value: leaf_der}]},
-        "authData" => %CBOR.Tag{tag: :bytes, value: auth_data}
-      })
-
-    {attestation_object, leaf_der}
+    {attestation_object(%{"x5c" => [bytes(leaf_der)]}, bytes(@auth_data)), leaf_der}
   end
 
   describe "validate/5" do
@@ -57,6 +74,46 @@ defmodule AppAttest.AttestationTest do
 
       assert Attestation.validate(attestation_object, "key-id", @challenge, @app_id, leaf_der) ==
                {:error, :unrecognized_environment}
+    end
+
+    test "rejects a CBOR object that is not an apple-appattest attestation instead of crashing" do
+      assert validate(CBOR.encode(%{"fmt" => "not-apple"})) == {:error, :invalid_attestation}
+
+      assert validate(attestation_object("not a statement", bytes(@auth_data))) ==
+               {:error, :invalid_attestation}
+    end
+
+    test "rejects an attestation with an empty certificate chain instead of crashing" do
+      assert validate(attestation_object(%{"x5c" => []}, bytes(@auth_data))) ==
+               {:error, :invalid_attestation}
+    end
+
+    test "rejects an attestation whose authData is not a CBOR byte string instead of crashing" do
+      assert validate(attestation_object(%{"x5c" => [bytes(<<1, 2, 3>>)]}, "not-bytes")) ==
+               {:error, :invalid_attestation}
+    end
+
+    test "rejects an attestation with junk in place of a certificate instead of crashing" do
+      assert validate(attestation_object(%{"x5c" => [bytes(<<1, 2, 3>>)]}, bytes(@auth_data))) ==
+               {:error, :invalid_attestation}
+    end
+  end
+
+  describe "rejection/0" do
+    test "lists every reason validate/5 can return" do
+      assert Typespecs.union_atoms(Attestation, :rejection) == [
+               :cbor_function_clause_error,
+               :cbor_match_error,
+               :cbor_case_clause_error,
+               :cbor_decoder_error,
+               :cannot_decode_non_binary_values,
+               :invalid_attestation,
+               :untrusted_root,
+               :nonce_mismatch,
+               :invalid_authenticator_data,
+               :app_id_mismatch,
+               :unrecognized_environment
+             ]
     end
   end
 end

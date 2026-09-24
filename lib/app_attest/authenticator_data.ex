@@ -24,6 +24,20 @@ defmodule AppAttest.AuthenticatorData do
   @typedoc "Which App Attest environment a device was attested in (#170)."
   @type environment :: :development | :production
 
+  @typedoc """
+  What `CBOR.decode/1` itself returns when a raw Attestation or Assertion
+  object is not well-formed CBOR at all. Declared here, in the module both
+  `AppAttest.Attestation` and `AppAttest.Assertion` share their CBOR
+  handling with, so each can list it in its own `rejection()` without
+  repeating the `cbor` package's own five atoms (#212).
+  """
+  @type cbor_error ::
+          :cbor_function_clause_error
+          | :cbor_match_error
+          | :cbor_case_clause_error
+          | :cbor_decoder_error
+          | :cannot_decode_non_binary_values
+
   # Apple's own two fixed aaguid values (architecture #174, confirmed against
   # Apple's "Validating apps that connect to your server" and the Spec's own
   # reference implementation takimoto3/app-attest): 16 bytes, either the
@@ -78,12 +92,6 @@ defmodule AppAttest.AuthenticatorData do
 
   def parse(_too_short), do: {:error, :invalid_authenticator_data}
 
-  @doc "Whether `authenticator_data`'s App ID hash matches `app_id` (`\"<Team ID>.<bundle ID>\"`)."
-  @spec app_id_matches?(t(), String.t()) :: boolean()
-  def app_id_matches?(%__MODULE__{app_id_hash: app_id_hash}, app_id) do
-    app_id_hash == :crypto.hash(:sha256, app_id)
-  end
-
   @doc """
   Checks `authenticator_data`'s App ID hash against `app_id`
   (`"<Team ID>.<bundle ID>"`), the check both `AppAttest.Attestation` and
@@ -96,6 +104,27 @@ defmodule AppAttest.AuthenticatorData do
     else
       {:error, :app_id_mismatch}
     end
+  end
+
+  @doc """
+  Apple's own nonce construction, the one both an Attestation and an
+  Assertion are bound to (confirmed against "Validating apps that connect
+  to your server" and architecture #174's reference implementations,
+  takimoto3/app-attest and uebelack/node-app-attest, which both build and
+  verify it this same way): hash `client_data` to get clientDataHash,
+  append it to the raw authenticator data, and hash the result again.
+
+  An Attestation's `client_data` is the one-time server challenge the
+  device attested, carried in the credential certificate's own nonce
+  extension; an Assertion's is the request-specific data the caller asked
+  the device to sign, and the nonce is what its signature covers. Built
+  here once for `AppAttest.Attestation`, `AppAttest.Assertion` and
+  `AppAttest.Fixtures.assertion/4` alike (#212), the same way #169 lifted
+  the identical App ID check into `check_app_id/2`.
+  """
+  @spec nonce(binary(), binary()) :: binary()
+  def nonce(auth_data, client_data) do
+    :crypto.hash(:sha256, auth_data <> :crypto.hash(:sha256, client_data))
   end
 
   @doc """
@@ -118,8 +147,16 @@ defmodule AppAttest.AuthenticatorData do
   # authData, each x5c certificate, an Assertion's own signature and
   # authenticatorData) in a `%CBOR.Tag{tag: :bytes, value: binary}`, rather
   # than handing back the raw binary directly (its own README explains why).
-  @spec unwrap_bytes(CBOR.Tag.t()) :: binary()
-  def unwrap_bytes(%CBOR.Tag{tag: :bytes, value: value}), do: value
+  # Anything else — a CBOR text string, a number, a missing key's `nil` —
+  # comes back `:error` rather than raising (#212): a caller's own field is
+  # exactly what a forged object gets wrong.
+  @spec unwrap_bytes(term()) :: {:ok, binary()} | :error
+  def unwrap_bytes(%CBOR.Tag{tag: :bytes, value: value}) when is_binary(value), do: {:ok, value}
+  def unwrap_bytes(_not_a_cbor_byte_string), do: :error
+
+  defp app_id_matches?(%__MODULE__{app_id_hash: app_id_hash}, app_id) do
+    app_id_hash == :crypto.hash(:sha256, app_id)
+  end
 
   defp parse_attested_credential_data(<<>>), do: :none
 

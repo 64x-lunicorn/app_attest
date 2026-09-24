@@ -21,15 +21,30 @@ defmodule AppAttest.Attestation do
         }
 
   @typedoc """
+  Every reason `validate/5` rejects an Attestation. A malformed Attestation
+  is rejected with one of these, never by raising (#212): the whole point of
+  this library is to distrust its own input.
+
+  * `t:AppAttest.AuthenticatorData.cbor_error/0` - `attestation_object` is
+    not well-formed CBOR at all.
+  * `:invalid_attestation` - it decodes, but is not an `apple-appattest`
+    attestation object: a different `fmt`, a missing `attStmt` or
+    `authData`, an `authData` that is not a CBOR byte string, an empty or
+    missing `x5c` certificate chain, or junk in place of a certificate.
   * `:untrusted_root` - the certificate chain does not lead to `root`.
   * `:nonce_mismatch` - the nonce does not match `challenge`.
+  * `:invalid_authenticator_data` - the authenticator data is truncated
+    (`AppAttest.AuthenticatorData.parse/1`).
   * `:app_id_mismatch` - the App ID hash does not match `app_id`.
   * `:unrecognized_environment` - the attested credential data's aaguid is
     neither Apple's development nor production value, or missing entirely.
   """
   @type rejection ::
-          :untrusted_root
+          AuthenticatorData.cbor_error()
+          | :invalid_attestation
+          | :untrusted_root
           | :nonce_mismatch
+          | :invalid_authenticator_data
           | :app_id_mismatch
           | :unrecognized_environment
 
@@ -59,12 +74,9 @@ defmodule AppAttest.Attestation do
           {:ok, attested()} | {:error, rejection()}
   def validate(attestation_object, _key_id, challenge, app_id, root) do
     with {:ok, decoded, _rest} <- CBOR.decode(attestation_object),
-         %{"fmt" => "apple-appattest", "attStmt" => att_stmt, "authData" => auth_data_tag} =
-           decoded,
-         auth_data = AuthenticatorData.unwrap_bytes(auth_data_tag),
-         chain = unwrap_chain(att_stmt["x5c"]),
-         [leaf_der | _] = chain,
-         leaf = X509.Certificate.from_der!(leaf_der),
+         {:ok, att_stmt, auth_data} <- unwrap_attestation(decoded),
+         {:ok, chain} <- certificate_chain(att_stmt),
+         {:ok, leaf} <- leaf_certificate(chain),
          :ok <- check_trusted_chain(root, chain),
          :ok <- check_nonce(leaf, auth_data, challenge),
          {:ok, authenticator_data} <- AuthenticatorData.parse(auth_data),
@@ -76,6 +88,38 @@ defmodule AppAttest.Attestation do
          counter: authenticator_data.counter,
          environment: environment
        }}
+    end
+  end
+
+  # Everything a genuine Attestation object carries and this module needs,
+  # taken apart in one place: anything else is not an `apple-appattest`
+  # attestation object and is rejected rather than raising (#212, the shape
+  # `AppAttest.RiskMetric`'s own parsers already use for a Receipt).
+  defp unwrap_attestation(%{
+         "fmt" => "apple-appattest",
+         "attStmt" => att_stmt,
+         "authData" => auth_data_tag
+       })
+       when is_map(att_stmt) do
+    case AuthenticatorData.unwrap_bytes(auth_data_tag) do
+      {:ok, auth_data} -> {:ok, att_stmt, auth_data}
+      :error -> {:error, :invalid_attestation}
+    end
+  end
+
+  defp unwrap_attestation(_not_an_apple_attestation), do: {:error, :invalid_attestation}
+
+  defp certificate_chain(att_stmt) do
+    case unwrap_chain(Map.get(att_stmt, "x5c")) do
+      {:ok, chain} -> {:ok, chain}
+      :error -> {:error, :invalid_attestation}
+    end
+  end
+
+  defp leaf_certificate([leaf_der | _rest_of_chain]) do
+    case X509.Certificate.from_der(leaf_der) do
+      {:ok, leaf} -> {:ok, leaf}
+      {:error, _malformed} -> {:error, :invalid_attestation}
     end
   end
 
@@ -91,7 +135,7 @@ defmodule AppAttest.Attestation do
   end
 
   defp check_nonce(leaf, auth_data, challenge) do
-    expected_nonce = :crypto.hash(:sha256, auth_data <> :crypto.hash(:sha256, challenge))
+    expected_nonce = AuthenticatorData.nonce(auth_data, challenge)
 
     with {:Extension, _oid, _critical, extension_value} <-
            X509.Certificate.extension(leaf, @nonce_extension_oid),
@@ -107,7 +151,19 @@ defmodule AppAttest.Attestation do
   @doc false
   # Shared with `AppAttest.Fixtures.certificate_chain/0`, so a fixture built
   # from a real attestation object and this module's own chain extraction
-  # can never drift apart (duplication finding on #168).
-  @spec unwrap_chain(list()) :: [RootCertificate.der()]
-  def unwrap_chain(x5c), do: Enum.map(x5c, &AuthenticatorData.unwrap_bytes/1)
+  # can never drift apart (duplication finding on #168). Comes back `:error`
+  # for anything that is not a non-empty list of CBOR byte strings, rather
+  # than raising (#212).
+  @spec unwrap_chain(term()) :: {:ok, [RootCertificate.der(), ...]} | :error
+  def unwrap_chain([_first | _rest] = x5c) do
+    unwrapped = Enum.map(x5c, &AuthenticatorData.unwrap_bytes/1)
+
+    if Enum.all?(unwrapped, &match?({:ok, _der}, &1)) do
+      {:ok, Enum.map(unwrapped, fn {:ok, der} -> der end)}
+    else
+      :error
+    end
+  end
+
+  def unwrap_chain(_not_a_certificate_chain), do: :error
 end
