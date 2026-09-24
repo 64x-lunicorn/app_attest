@@ -86,15 +86,27 @@ defmodule AppAttest.Fixtures do
   end
 
   @doc """
-  A self-generated, CBOR-encoded Assertion object for `counter` and `app_id`
-  (`"<Team ID>.<bundle ID>"`), signed by `private_key` over its own
-  authenticator data — the same 37-byte prefix shape
+  A self-generated clientData value standing in for the request-specific
+  data a real caller would hash and ask the device to sign (follow-up to
+  #169; no real device Assertion is recorded, matching `device_key_pair/0`
+  and `assertion/4` below).
+  """
+  @spec client_data() :: binary()
+  def client_data, do: "self-generated-client-data"
+
+  @doc """
+  A self-generated, CBOR-encoded Assertion object for `counter`, `app_id`
+  (`"<Team ID>.<bundle ID>"`) and `client_data`, signed by `private_key`
+  over its own authenticator data concatenated with `client_data`'s SHA-256
+  hash, per Apple's own nonce construction (`AppAttest.Assertion`'s own
+  `check_signature/4`) — the same 37-byte prefix shape
   `AppAttest.AuthenticatorData.parse/1` already parses for an Assertion (no
   attested credential data).
 
   Mirrors `attestation/0`'s own "wrong App ID hash" pattern: build one fixed
-  fixture, then vary the *expected* app ID passed to `validate/4` to
-  construct the mismatch, rather than varying the fixture itself.
+  fixture, then vary the *expected* app ID or client data passed to
+  `validate/5` to construct a mismatch, rather than varying the fixture
+  itself.
 
   Both the signature and the authenticator data are wrapped in
   `%CBOR.Tag{tag: :bytes}` before encoding, so they decode back the same
@@ -102,10 +114,12 @@ defmodule AppAttest.Fixtures do
   `attestation-development.json` fixture's own `authData`): plain
   `CBOR.encode/1` of a raw binary produces a CBOR *text* string instead.
   """
-  @spec assertion(non_neg_integer(), String.t(), X509.PrivateKey.t()) :: binary()
-  def assertion(counter, app_id, private_key) do
+  @spec assertion(non_neg_integer(), String.t(), binary(), X509.PrivateKey.t()) :: binary()
+  def assertion(counter, app_id, client_data, private_key) do
     auth_data = <<:crypto.hash(:sha256, app_id)::binary, 0, counter::32-big>>
-    signature = :public_key.sign(auth_data, :sha256, private_key)
+    client_data_hash = :crypto.hash(:sha256, client_data)
+    nonce = :crypto.hash(:sha256, auth_data <> client_data_hash)
+    signature = :public_key.sign(nonce, :sha256, private_key)
 
     CBOR.encode(%{
       "signature" => %CBOR.Tag{tag: :bytes, value: signature},
