@@ -70,7 +70,8 @@ defmodule AppAttest.Fixtures do
   @spec certificate_chain() :: [AppAttest.RootCertificate.der(), ...]
   def certificate_chain do
     {:ok, %{"attStmt" => %{"x5c" => x5c}}, _rest} = CBOR.decode(attestation())
-    AppAttest.Attestation.unwrap_chain(x5c)
+    {:ok, chain} = AppAttest.Attestation.unwrap_chain(x5c)
+    chain
   end
 
   @doc "This Attestation's App ID: `\"<Team ID>.<bundle ID>\"`."
@@ -119,8 +120,10 @@ defmodule AppAttest.Fixtures do
   A self-generated, CBOR-encoded Assertion object for `counter`, `app_id`
   (`"<Team ID>.<bundle ID>"`) and `client_data`, signed by `private_key`
   over its own authenticator data concatenated with `client_data`'s SHA-256
-  hash, per Apple's own nonce construction (`AppAttest.Assertion`'s own
-  `check_signature/4`) — the same 37-byte prefix shape
+  hash, per Apple's own nonce construction
+  (`AppAttest.AuthenticatorData.nonce/2`, the one shared function both
+  `AppAttest.Attestation` and `AppAttest.Assertion` build it with) — the
+  same 37-byte prefix shape
   `AppAttest.AuthenticatorData.parse/1` already parses for an Assertion (no
   attested credential data).
 
@@ -138,8 +141,7 @@ defmodule AppAttest.Fixtures do
   @spec assertion(non_neg_integer(), String.t(), binary(), X509.PrivateKey.t()) :: binary()
   def assertion(counter, app_id, client_data, private_key) do
     auth_data = <<:crypto.hash(:sha256, app_id)::binary, 0, counter::32-big>>
-    client_data_hash = :crypto.hash(:sha256, client_data)
-    nonce = :crypto.hash(:sha256, auth_data <> client_data_hash)
+    nonce = AppAttest.AuthenticatorData.nonce(auth_data, client_data)
     signature = :public_key.sign(nonce, :sha256, private_key)
 
     CBOR.encode(%{

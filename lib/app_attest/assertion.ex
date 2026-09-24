@@ -17,17 +17,31 @@ defmodule AppAttest.Assertion do
   alias AppAttest.AuthenticatorData
 
   @typedoc """
+  Every reason `validate/7` rejects an Assertion. A malformed Assertion is
+  rejected with one of these, never by raising (#212): the whole point of
+  this library is to distrust its own input.
+
+  * `:environment_mismatch` - `expected_environment` does not match `stored_environment`.
+  * `t:AppAttest.AuthenticatorData.cbor_error/0` - `assertion_object` is not
+    well-formed CBOR at all.
+  * `:invalid_assertion` - it decodes, but is not an assertion object: a
+    missing `signature` or `authenticatorData`, or one of the two not a
+    CBOR byte string.
+  * `:invalid_authenticator_data` - the authenticator data is truncated
+    (`AppAttest.AuthenticatorData.parse/1`).
   * `:invalid_signature` - the signature does not match `public_key` and
     `client_data`.
   * `:app_id_mismatch` - the App ID hash does not match `app_id`.
   * `:counter_not_increasing` - the Counter is not strictly greater than `stored_counter`.
-  * `:environment_mismatch` - `expected_environment` does not match `stored_environment`.
   """
   @type rejection ::
-          :invalid_signature
+          :environment_mismatch
+          | AuthenticatorData.cbor_error()
+          | :invalid_assertion
+          | :invalid_authenticator_data
+          | :invalid_signature
           | :app_id_mismatch
           | :counter_not_increasing
-          | :environment_mismatch
 
   @doc """
   Validates `assertion_object` — the raw, CBOR-encoded assertion Apple's SDK
@@ -70,15 +84,28 @@ defmodule AppAttest.Assertion do
       ) do
     with :ok <- check_environment(stored_environment, expected_environment),
          {:ok, decoded, _rest} <- CBOR.decode(assertion_object),
-         %{"signature" => signature_tag, "authenticatorData" => auth_data_tag} = decoded,
-         signature = AuthenticatorData.unwrap_bytes(signature_tag),
-         auth_data = AuthenticatorData.unwrap_bytes(auth_data_tag),
+         {:ok, signature, auth_data} <- unwrap_assertion(decoded),
          {:ok, authenticator_data} <- AuthenticatorData.parse(auth_data),
          :ok <- check_signature(auth_data, client_data, signature, public_key),
          :ok <- AuthenticatorData.check_app_id(authenticator_data, app_id) do
       check_counter(authenticator_data, stored_counter)
     end
   end
+
+  # Both fields a genuine Assertion object carries, taken apart in one
+  # place: anything else is not an assertion object and is rejected rather
+  # than raising (#212, the shape `AppAttest.RiskMetric`'s own parsers
+  # already use for a Receipt).
+  defp unwrap_assertion(%{"signature" => signature_tag, "authenticatorData" => auth_data_tag}) do
+    with {:ok, signature} <- AuthenticatorData.unwrap_bytes(signature_tag),
+         {:ok, auth_data} <- AuthenticatorData.unwrap_bytes(auth_data_tag) do
+      {:ok, signature, auth_data}
+    else
+      :error -> {:error, :invalid_assertion}
+    end
+  end
+
+  defp unwrap_assertion(_not_an_assertion), do: {:error, :invalid_assertion}
 
   defp check_environment(stored_environment, expected_environment) do
     if stored_environment == expected_environment do
@@ -88,15 +115,11 @@ defmodule AppAttest.Assertion do
     end
   end
 
-  # Apple's own nonce construction (confirmed against "Validating apps that
-  # connect to your server" and architecture #174's reference
-  # implementations, takimoto3/app-attest and uebelack/node-app-attest,
-  # which both build and verify it this same way): hash `client_data` to
-  # get clientDataHash, append it to the raw authenticator data, and hash
-  # the result again to get the nonce the signature actually covers.
+  # An Assertion's signature covers Apple's own nonce construction, built
+  # by the one shared `AppAttest.AuthenticatorData.nonce/2` an Attestation's
+  # own nonce check uses too (#212), never `auth_data` alone.
   defp check_signature(auth_data, client_data, signature, public_key) do
-    client_data_hash = :crypto.hash(:sha256, client_data)
-    nonce = :crypto.hash(:sha256, auth_data <> client_data_hash)
+    nonce = AuthenticatorData.nonce(auth_data, client_data)
 
     if :public_key.verify(nonce, :sha256, signature, public_key) do
       :ok
