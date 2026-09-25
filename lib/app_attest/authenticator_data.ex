@@ -120,7 +120,7 @@ defmodule AppAttest.AuthenticatorData do
   0x00 bytes — Apple's own two fixed values, nothing else. Anything else,
   including `nil` (no attested credential data at all), is rejected rather
   than raising, so a malformed or forged aaguid cannot crash a caller such
-  as `AppAttest.Attestation.validate/5`.
+  as `AppAttest.Attestation.validate/6`.
   """
   @spec environment(binary() | nil) :: environment() | {:error, :unrecognized_environment}
   def environment(@aaguid_development), do: :development

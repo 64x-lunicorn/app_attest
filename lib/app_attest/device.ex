@@ -4,7 +4,7 @@ defmodule AppAttest.Device do
   Counter, the App Attest environment it was attested in, and its current
   receipt for the next Risk metric fetch.
 
-  `AppAttest.Attestation.validate/5` returns one; every
+  `AppAttest.Attestation.validate/6` returns one; every
   `AppAttest.Assertion.validate/5` takes the stored one and returns it with
   the Counter moved on; `AppAttest.RiskMetric.fetch/5` takes its `receipt`
   and returns the next one to store in its place. `app_attest` itself never

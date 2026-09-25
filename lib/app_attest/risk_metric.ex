@@ -7,7 +7,7 @@ defmodule AppAttest.RiskMetric do
   Apple's own "Assessing fraud risk" guide describes this as a *receipt
   exchange*, not a per-device lookup: the caller sends whatever receipt it
   currently holds — its `AppAttest.Device`'s `receipt`, which
-  `AppAttest.Attestation.validate/5` fills from the Attestation's own
+  `AppAttest.Attestation.validate/6` fills from the Attestation's own
   `attStmt.receipt` at first — to Apple's server, authenticated with a
   DeviceCheck JWT, and gets back a new receipt carrying the risk metric.
   No key ID appears anywhere in that request. `app_attest` holds no device
@@ -124,7 +124,7 @@ defmodule AppAttest.RiskMetric do
   endpoint for `environment`, authenticated with `device_check_key`, and
   verifies the new receipt Apple returns against `root` — always
   `AppAttest.RootCertificate.apple_root_ca_g3/0` in production; a test
-  substitutes its own, the same way `AppAttest.Attestation.validate/5`
+  substitutes its own, the same way `AppAttest.Attestation.validate/6`
   takes its own root explicitly.
 
   `opts[:transport]` replaces the real HTTP call to Apple with a stand-in,

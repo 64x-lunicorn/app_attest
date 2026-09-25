@@ -49,7 +49,10 @@ defmodule AppAttest.IntegrationTest do
   `AppAttest.Attestation.validate/5` returns it, receipt included, and
   `AppAttest.Assertion.validate/5` takes it in place of `validate/7`'s
   public key, stored Counter and stored environment, returning it with
-  the Counter moved on.
+  the Counter moved on. #211 widened `AppAttest.Attestation.validate/5` to
+  `validate/6`: it takes the environment the caller expects as its own
+  trailing parameter, the way `AppAttest.Assertion.validate/5` already
+  does, and rejects an Attestation whose aaguid yields the other one.
   """
 
   use ExUnit.Case, async: true
@@ -85,7 +88,8 @@ defmodule AppAttest.IntegrationTest do
                  AppAttest.Fixtures.key_id(),
                  AppAttest.Fixtures.challenge(),
                  AppAttest.Fixtures.app_id(),
-                 AppAttest.RootCertificate.default()
+                 AppAttest.RootCertificate.default(),
+                 :development
                )
     end
 
@@ -96,7 +100,8 @@ defmodule AppAttest.IntegrationTest do
                  AppAttest.Fixtures.key_id(),
                  AppAttest.Fixtures.challenge(),
                  AppAttest.Fixtures.app_id(),
-                 AppAttest.Fixtures.untrusted_root()
+                 AppAttest.Fixtures.untrusted_root(),
+                 :development
                )
     end
 
@@ -107,7 +112,8 @@ defmodule AppAttest.IntegrationTest do
                  AppAttest.Fixtures.key_id(),
                  "a-different-challenge",
                  AppAttest.Fixtures.app_id(),
-                 AppAttest.RootCertificate.default()
+                 AppAttest.RootCertificate.default(),
+                 :development
                )
     end
 
@@ -118,7 +124,8 @@ defmodule AppAttest.IntegrationTest do
                  AppAttest.Fixtures.key_id(),
                  AppAttest.Fixtures.challenge(),
                  "a-different-app-id-hash",
-                 AppAttest.RootCertificate.default()
+                 AppAttest.RootCertificate.default(),
+                 :development
                )
     end
   end
@@ -191,7 +198,23 @@ defmodule AppAttest.IntegrationTest do
     end
   end
 
-  describe "Development vs production (built by #170)" do
+  describe "Development vs production (built by #170 and #211)" do
+    test "A production attestation is never accepted as a development one, or the reverse" do
+      # Apple's real development Attestation, otherwise entirely genuine:
+      # right chain, nonce, Key ID and App ID. Only the caller's expected
+      # environment differs from the one its own aaguid yields, so this
+      # proves the environment check rejects on its own.
+      assert {:error, :environment_mismatch} =
+               AppAttest.Attestation.validate(
+                 AppAttest.Fixtures.attestation(),
+                 AppAttest.Fixtures.key_id(),
+                 AppAttest.Fixtures.challenge(),
+                 AppAttest.Fixtures.app_id(),
+                 AppAttest.RootCertificate.default(),
+                 _expected_environment = :production
+               )
+    end
+
     test "A production assertion is never accepted as a development one, or the reverse" do
       {private_key, device} = stored_device(41, :development)
       client_data = AppAttest.Fixtures.client_data()
@@ -269,7 +292,8 @@ defmodule AppAttest.IntegrationTest do
             AppAttest.Fixtures.key_id(),
             AppAttest.Fixtures.challenge(),
             AppAttest.Fixtures.app_id(),
-            AppAttest.Fixtures.untrusted_root()
+            AppAttest.Fixtures.untrusted_root(),
+            :development
           ),
         nonce_mismatch:
           AppAttest.Attestation.validate(
@@ -277,7 +301,8 @@ defmodule AppAttest.IntegrationTest do
             AppAttest.Fixtures.key_id(),
             "a-different-challenge",
             AppAttest.Fixtures.app_id(),
-            AppAttest.RootCertificate.default()
+            AppAttest.RootCertificate.default(),
+            :development
           ),
         app_id_mismatch:
           AppAttest.Attestation.validate(
@@ -285,7 +310,8 @@ defmodule AppAttest.IntegrationTest do
             AppAttest.Fixtures.key_id(),
             AppAttest.Fixtures.challenge(),
             "a-different-app-id-hash",
-            AppAttest.RootCertificate.default()
+            AppAttest.RootCertificate.default(),
+            :development
           ),
         counter_not_increasing:
           AppAttest.Assertion.validate(

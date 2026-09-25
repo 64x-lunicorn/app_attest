@@ -81,7 +81,8 @@ defmodule AppAttest.RiskMetricAppleTest do
         Fixtures.key_id(),
         Fixtures.challenge(),
         Fixtures.app_id(),
-        RootCertificate.default()
+        RootCertificate.default(),
+        :development
       )
 
     RiskMetric.fetch(

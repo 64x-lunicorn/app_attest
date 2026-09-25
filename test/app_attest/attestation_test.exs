@@ -49,7 +49,14 @@ defmodule AppAttest.AttestationTest do
   defp bytes(value), do: %CBOR.Tag{tag: :bytes, value: value}
 
   defp validate(attestation_object) do
-    Attestation.validate(attestation_object, "key-id", @challenge, @app_id, @any_root)
+    Attestation.validate(
+      attestation_object,
+      "key-id",
+      @challenge,
+      @app_id,
+      @any_root,
+      :development
+    )
   end
 
   # A self-signed, entirely self-generated attestation object (no real
@@ -65,6 +72,7 @@ defmodule AppAttest.AttestationTest do
   # identifier. Options vary one field at a time:
   #
   # * `:counter` - the authenticator data's Counter (default 0).
+  # * `:aaguid` - the aaguid (default: Apple's development value).
   # * `:credential_id` - the credentialId (default: the key identifier).
   # * `:attested_credential_data` - `false` for only the 37-byte prefix,
   #   so `AuthenticatorData.parse/1` comes back with `aaguid: nil` — a
@@ -83,7 +91,9 @@ defmodule AppAttest.AttestationTest do
 
     auth_data =
       if Keyword.get(opts, :attested_credential_data, true) do
-        prefix <> "appattestdevelop" <> <<byte_size(credential_id)::16>> <> credential_id
+        prefix <>
+          Keyword.get(opts, :aaguid, "appattestdevelop") <>
+          <<byte_size(credential_id)::16>> <> credential_id
       else
         prefix
       end
@@ -114,11 +124,12 @@ defmodule AppAttest.AttestationTest do
       key_id,
       Fixtures.challenge(),
       Fixtures.app_id(),
-      RootCertificate.default()
+      RootCertificate.default(),
+      :development
     )
   end
 
-  describe "validate/5" do
+  describe "validate/6" do
     test "returns a Device carrying the receipt a genuine Attestation brought in attStmt.receipt" do
       assert {:ok, %Device{} = device} =
                Attestation.validate(
@@ -126,7 +137,8 @@ defmodule AppAttest.AttestationTest do
                  Fixtures.key_id(),
                  Fixtures.challenge(),
                  Fixtures.app_id(),
-                 RootCertificate.default()
+                 RootCertificate.default(),
+                 :development
                )
 
       assert %Device{counter: 0, environment: :development, public_key: {{:ECPoint, _}, _}} =
@@ -180,7 +192,8 @@ defmodule AppAttest.AttestationTest do
                Base.encode64(:crypto.hash(:sha256, "a different key")),
                Fixtures.challenge(),
                "TEAMID1234.not.this.app",
-               RootCertificate.default()
+               RootCertificate.default(),
+               :development
              ) == {:error, :key_id_mismatch}
     end
 
@@ -188,21 +201,42 @@ defmodule AppAttest.AttestationTest do
       {attestation_object, key_id, leaf_der} =
         self_generated_attestation(credential_id: :crypto.hash(:sha256, "another credential"))
 
-      assert Attestation.validate(attestation_object, key_id, @challenge, @app_id, leaf_der) ==
+      assert Attestation.validate(
+               attestation_object,
+               key_id,
+               @challenge,
+               @app_id,
+               leaf_der,
+               :development
+             ) ==
                {:error, :key_id_mismatch}
     end
 
     test "rejects a self-generated Attestation whose Counter is not 0" do
       {attestation_object, key_id, leaf_der} = self_generated_attestation(counter: 1)
 
-      assert Attestation.validate(attestation_object, key_id, @challenge, @app_id, leaf_der) ==
+      assert Attestation.validate(
+               attestation_object,
+               key_id,
+               @challenge,
+               @app_id,
+               leaf_der,
+               :development
+             ) ==
                {:error, :counter_not_zero}
     end
 
     test "checks the App ID before the Counter, in Apple's order" do
       {attestation_object, key_id, leaf_der} = self_generated_attestation(counter: 1)
 
-      assert Attestation.validate(attestation_object, key_id, @challenge, "OTHER.app", leaf_der) ==
+      assert Attestation.validate(
+               attestation_object,
+               key_id,
+               @challenge,
+               "OTHER.app",
+               leaf_der,
+               :development
+             ) ==
                {:error, :app_id_mismatch}
     end
 
@@ -210,13 +244,27 @@ defmodule AppAttest.AttestationTest do
       {attestation_object, key_id, leaf_der} = self_generated_attestation()
 
       assert {:ok, %Device{receipt: "a-receipt", counter: 0, environment: :development}} =
-               Attestation.validate(attestation_object, key_id, @challenge, @app_id, leaf_der)
+               Attestation.validate(
+                 attestation_object,
+                 key_id,
+                 @challenge,
+                 @app_id,
+                 leaf_der,
+                 :development
+               )
     end
 
     test "rejects an otherwise genuine attestation whose attStmt carries no receipt" do
       {attestation_object, key_id, leaf_der} = self_generated_attestation(att_stmt: %{})
 
-      assert Attestation.validate(attestation_object, key_id, @challenge, @app_id, leaf_der) ==
+      assert Attestation.validate(
+               attestation_object,
+               key_id,
+               @challenge,
+               @app_id,
+               leaf_der,
+               :development
+             ) ==
                {:error, :invalid_attestation}
     end
 
@@ -224,7 +272,14 @@ defmodule AppAttest.AttestationTest do
       {attestation_object, key_id, leaf_der} =
         self_generated_attestation(att_stmt: %{"receipt" => "a CBOR text string"})
 
-      assert Attestation.validate(attestation_object, key_id, @challenge, @app_id, leaf_der) ==
+      assert Attestation.validate(
+               attestation_object,
+               key_id,
+               @challenge,
+               @app_id,
+               leaf_der,
+               :development
+             ) ==
                {:error, :invalid_attestation}
     end
 
@@ -237,8 +292,45 @@ defmodule AppAttest.AttestationTest do
       {attestation_object, key_id, leaf_der} =
         self_generated_attestation(attested_credential_data: false)
 
-      assert Attestation.validate(attestation_object, key_id, @challenge, @app_id, leaf_der) ==
+      assert Attestation.validate(
+               attestation_object,
+               key_id,
+               @challenge,
+               @app_id,
+               leaf_der,
+               :development
+             ) ==
                {:error, :unrecognized_environment}
+    end
+
+    test "rejects a production Attestation where a development one is expected" do
+      # Apple's production aaguid: "appattest" padded with seven 0x00 bytes.
+      {attestation_object, key_id, leaf_der} =
+        self_generated_attestation(aaguid: "appattest" <> <<0::56>>)
+
+      assert Attestation.validate(
+               attestation_object,
+               key_id,
+               @challenge,
+               @app_id,
+               leaf_der,
+               :development
+             ) == {:error, :environment_mismatch}
+    end
+
+    test "accepts a production Attestation where a production one is expected" do
+      {attestation_object, key_id, leaf_der} =
+        self_generated_attestation(aaguid: "appattest" <> <<0::56>>)
+
+      assert {:ok, %Device{environment: :production}} =
+               Attestation.validate(
+                 attestation_object,
+                 key_id,
+                 @challenge,
+                 @app_id,
+                 leaf_der,
+                 :production
+               )
     end
 
     test "rejects a CBOR object that is not an apple-appattest attestation instead of crashing" do
@@ -265,7 +357,7 @@ defmodule AppAttest.AttestationTest do
   end
 
   describe "rejection/0" do
-    test "lists every reason validate/5 can return" do
+    test "lists every reason validate/6 can return" do
       assert Typespecs.union_atoms(Attestation, :rejection) == [
                :invalid_attestation,
                :untrusted_root,
@@ -274,7 +366,8 @@ defmodule AppAttest.AttestationTest do
                :invalid_authenticator_data,
                :app_id_mismatch,
                :counter_not_zero,
-               :unrecognized_environment
+               :unrecognized_environment,
+               :environment_mismatch
              ]
     end
   end
