@@ -46,7 +46,8 @@ export APPLE_TEAM_ID=YYYYYYYYYY              # your Apple Developer Team ID
 Never commit the `.p8` file or paste its contents anywhere. In CI the same
 tests read the key's *contents* from the `APPLE_DEVICECHECK_KEY` repository
 secret, with `APPLE_DEVICECHECK_KEY_ID` and `APPLE_TEAM_ID` as repository
-variables; a pull request from a fork gets no secret and simply skips them.
+secrets as well; a pull request from a fork gets no secrets and simply skips
+them.
 
 ## Checks
 

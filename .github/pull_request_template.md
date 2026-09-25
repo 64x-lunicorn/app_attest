@@ -1,4 +1,4 @@
-<!-- CI runs Format, Unused deps, Compile, Test, Workflow lint and Secret scan, and ends in the CI gate. Run `mix ci` before pushing to get the same answer without a round trip. -->
+<!-- CI runs Format, Unused deps, Compile, Test, Pending scenarios, Workflow lint and Secret scan, and ends in the CI gate. Run `mix ci` before pushing to get the same answer without a round trip. -->
 
 ## What and why
 
