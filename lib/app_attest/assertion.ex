@@ -1,15 +1,15 @@
 defmodule AppAttest.Assertion do
   @moduledoc """
-  Validates a device's App Attest Assertion (Spec #166, architecture #174):
+  Validates a device's App Attest Assertion:
   its signature against the device's already-attested public key and the
   caller's `client_data` for this request, its App ID hash against the
   expected app, its Counter against the device's last stored Counter, so a
   captured Assertion cannot be replayed, nor reused for a different request
   than the one it was signed for, and its claimed environment against the
-  one the device was attested in (#170).
+  one the device was attested in.
 
-  `app_attest` holds no device state itself (CLAUDE.md, Corridor ADR 0006,
-  #174): `validate/5` takes the caller's stored `AppAttest.Device` as input
+  `app_attest` holds no device state itself (Corridor ADR 0006), because
+  storage belongs to the consuming server: `validate/5` takes the caller's stored `AppAttest.Device` as input
   and returns it with the Counter moved on, for the caller to persist; it
   persists nothing on its own.
   """
@@ -18,7 +18,7 @@ defmodule AppAttest.Assertion do
 
   @typedoc """
   Every reason `validate/5` rejects an Assertion. A malformed Assertion is
-  rejected with one of these, never by raising (#212): the whole point of
+  rejected with one of these, never by raising: the whole point of
   this library is to distrust its own input.
 
   * `:environment_mismatch` - `expected_environment` does not match the
@@ -27,7 +27,7 @@ defmodule AppAttest.Assertion do
     not well-formed CBOR at all, a missing `signature` or
     `authenticatorData`, or one of the two not a CBOR byte string. Which
     CBOR decoding failure it was is deliberately not told apart, so no atom
-    of the `cbor` package reaches a caller (#10).
+    of the `cbor` package reaches a caller.
   * `:invalid_authenticator_data` - the authenticator data is truncated
     (`AppAttest.AuthenticatorData.parse/1`).
   * `:invalid_signature` - the signature does not match the Device's
@@ -59,7 +59,7 @@ defmodule AppAttest.Assertion do
   the same `client_data` the device was asked to sign for that request.
 
   An Assertion carries no environment bytes of its own, so `expected_environment`
-  is the environment the caller expects for this request (#170); it is
+  is the environment the caller expects for this request; it is
   compared against the Device's `environment`, never read off the
   assertion itself.
 
@@ -102,7 +102,7 @@ defmodule AppAttest.Assertion do
 
   # An Assertion's signature covers Apple's own nonce construction, built
   # by the one shared `AppAttest.AuthenticatorData.nonce/2` an Attestation's
-  # own nonce check uses too (#212), never `auth_data` alone.
+  # own nonce check uses too, never `auth_data` alone.
   defp check_signature(auth_data, client_data, signature, public_key) do
     nonce = AuthenticatorData.nonce(auth_data, client_data)
 

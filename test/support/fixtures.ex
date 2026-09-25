@@ -4,21 +4,21 @@ defmodule AppAttest.Fixtures do
   (notice kept, see the repository's own `NOTICE` file) from
   `uebelack/node-app-attest`'s `test/fixtures/attestation-development.json`
   (https://github.com/uebelack/node-app-attest); plus self-generated device
-  key pairs and Assertions (#169).
+  key pairs and Assertions.
 
-  The Spec's own domain rule 6 (#166) — validation is trusted only once
-  proven against Attestations Apple actually issued, not only against
-  self-generated data — is why the "genuine Attestation is accepted"
-  scenario is proven against these real bytes rather than self-generated
-  ones. The Attestation rejection scenarios reuse the very same bytes with
+  The domain rule of Spec 64x-lunicorn/Corridor#166 "Validation is trusted
+  only once it has been proven against Attestations Apple actually issued,
+  not only against self-generated data" is why the "genuine Attestation
+  is accepted" scenario is proven against these real bytes rather than
+  self-generated ones. The Attestation rejection scenarios reuse the very same bytes with
   one input to `AppAttest.Attestation.validate/6` deliberately wrong at a
   time (such as the challenge, the App ID, the Key ID, the root or the
   expected environment), so each is proven to fail for that one specific
-  reason (Spec domain rule 7) without needing separate self-generated
-  fixtures for them. Domain rule 6 names Attestations specifically: no real
-  device Assertion is recorded, so `device_key_pair/0` and `assertion/4`
-  build self-signed Assertion data instead (#169's own implementation
-  notes).
+  reason ("Every rejection case is deliberately constructed and tested,
+  not left to accident") without needing separate self-generated fixtures
+  for them. The first of these two rules names Attestations specifically: no real device
+  Assertion is recorded, so `device_key_pair/0` and `assertion/4` build
+  self-signed Assertion data instead.
   """
 
   @fixture_path Path.join(__DIR__, "fixtures/attestation-development.json")
@@ -81,8 +81,8 @@ defmodule AppAttest.Fixtures do
   @doc """
   A throwaway, self-signed root certificate that the fixture's Attestation
   does not chain to — a substitute root for constructing the "untrusted
-  root" rejection (architecture #174: the root is always an explicit
-  parameter, precisely so a test can do this).
+  root" rejection (the root is always an explicit parameter, precisely so
+  a test can do this).
   """
   @spec untrusted_root() :: AppAttest.RootCertificate.der()
   def untrusted_root do
@@ -94,9 +94,10 @@ defmodule AppAttest.Fixtures do
 
   @doc """
   A freshly self-generated device key pair, standing in for a device's
-  Secure Enclave App Attest key (#169). No real Assertion is recorded (only
-  the Attestation above is): the Spec's own domain rule 6 (#166) requires
-  proof against real, Apple-issued data only for Attestations, so an
+  Secure Enclave App Attest key. No real Assertion is recorded (only the
+  Attestation above is): the Spec's domain rule "Validation is trusted only
+  once it has been proven against Attestations Apple actually issued"
+  requires proof against real, Apple-issued data only for Attestations, so an
   Assertion's "genuine" scenario and its rejection fixtures are self-signed
   here instead, the same way `untrusted_root/0` self-signs a substitute
   root.
@@ -109,9 +110,9 @@ defmodule AppAttest.Fixtures do
 
   @doc """
   A self-generated clientData value standing in for the request-specific
-  data a real caller would hash and ask the device to sign (follow-up to
-  #169; no real device Assertion is recorded, matching `device_key_pair/0`
-  and `assertion/4` below).
+  data a real caller would hash and ask the device to sign (no real device
+  Assertion is recorded, matching `device_key_pair/0` and `assertion/4`
+  below).
   """
   @spec client_data() :: binary()
   def client_data, do: "self-generated-client-data"
@@ -153,7 +154,7 @@ defmodule AppAttest.Fixtures do
   @doc """
   A throwaway root and leaf certificate pair standing in for a receipt's
   real chain to the root `AppAttest.RiskMetric` trusts in production
-  (`AppAttest.RootCertificate.apple_root_ca_g3/0`, #171): `root` is the
+  (`AppAttest.RootCertificate.apple_root_ca_g3/0`): `root` is the
   substitute trusted root a test passes to `AppAttest.RiskMetric.fetch/5`
   in place of the real one; `leaf` and `leaf_key` sign a receipt built by
   `receipt/2`. Issued from one another rather than self-signed like
@@ -190,9 +191,9 @@ defmodule AppAttest.Fixtures do
   end
 
   @doc """
-  A fresh DeviceCheck key fixture (#171), standing in for a real key
-  downloaded from the Apple Developer portal. Key ID and Team ID are
-  10-character placeholders, the length Apple assigns both
+  A fresh DeviceCheck key fixture, standing in for a real key downloaded
+  from the Apple Developer portal. Its DeviceCheck key identifier and Team
+  ID are 10-character placeholders, the length Apple assigns both
   (`t:AppAttest.RiskMetric.device_check_key/0`'s own typedoc).
   """
   @spec device_check_key() :: AppAttest.RiskMetric.device_check_key()
@@ -205,7 +206,7 @@ defmodule AppAttest.Fixtures do
   end
 
   @doc """
-  A self-signed CMS/PKCS#7 receipt (#171) carrying `risk_metric` in Apple's
+  A self-signed CMS/PKCS#7 receipt carrying `risk_metric` in Apple's
   own field 17, and validity dates in its fields 19 and 21
   (`AppAttest.RiskMetric`'s own moduledoc), signed by `chain.leaf_key` over
   `chain.leaf` (`risk_metric_chain/0`). `receipt_not_before/0` and

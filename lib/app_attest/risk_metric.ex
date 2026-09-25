@@ -10,16 +10,17 @@ defmodule AppAttest.RiskMetric do
   `AppAttest.Attestation.validate/6` fills from the Attestation's own
   `attStmt.receipt` at first — to Apple's server, authenticated with a
   DeviceCheck JWT, and gets back a new receipt carrying the risk metric.
-  No key ID appears anywhere in that request. `app_attest` holds no device
-  state itself (Corridor ADR 0006): `fetch/5` returns the new receipt for
-  the caller to store on its Device in place of the one it sent; it
-  persists nothing on its own.
+  The device's Key ID appears nowhere in that request. `app_attest` holds
+  no device state itself (Corridor ADR 0006): `fetch/5` returns the new
+  receipt for the caller to store on its Device in place of the one it
+  sent; it persists nothing on its own.
 
   A receipt's signature is verified against Apple's general-purpose "Apple
   Root CA - G3" (`AppAttest.RootCertificate.apple_root_ca_g3/0`), not the
   App Attest-specific root an Attestation's own chain uses
   (`AppAttest.RootCertificate.default/0`). Which of the two a real Apple
-  receipt chains to is still open (#171, #174) until one has been verified
+  receipt chains to is still open (64x-lunicorn/Corridor#171,
+  64x-lunicorn/Corridor#174) until one has been verified
   in Corridor's first TestFlight round; `root` stays an explicit parameter
   either way.
 
@@ -44,7 +45,8 @@ defmodule AppAttest.RiskMetric do
   explicit parameter, like `AppAttest.RootCertificate`'s own root, never
   `Application` config or a compile-time flag.
 
-    * `:key_id` - the 10-character Key ID Apple assigned this key.
+    * `:key_id` - the 10-character DeviceCheck key identifier Apple
+      assigned this key (the JWT's `kid`); not a device's Key ID.
     * `:team_id` - the 10-character Apple Developer Team ID (the JWT's
       `iss`; also the first segment of every App ID this key's app uses).
     * `:private_key` - the key's own EC private key material.
@@ -98,16 +100,15 @@ defmodule AppAttest.RiskMetric do
   @type transport :: (request() -> {:ok, 100..599, binary()} | {:error, term()})
 
   # Apple's own two risk-metric hosts and fixed path ("Assessing fraud
-  # risk", confirmed directly; architecture #174's own secondary-sourced
-  # guess at both hostnames turned out right).
+  # risk").
   @production_host ~c"https://data.appattest.apple.com"
   @development_host ~c"https://data-development.appattest.apple.com"
   @path ~c"/v1/attestationData"
 
   # RFC 5652 pkcs7-signedData, and the one digest algorithm Apple's receipts
-  # and this ticket's own JWT both use (confirmed: takimoto3/app-attest's
-  # receipt fixtures, and every JWT reference architecture #174 names, are
-  # SHA-256 throughout).
+  # and the DeviceCheck JWT both use (confirmed: takimoto3/app-attest's
+  # receipt fixtures and the APNs-style provider token procedure are SHA-256
+  # throughout).
   @signed_data_oid {1, 2, 840, 113_549, 1, 7, 2}
   @sha256_oid {2, 16, 840, 1, 101, 3, 4, 2, 1}
 
@@ -127,7 +128,8 @@ defmodule AppAttest.RiskMetric do
   endpoint for `environment`, authenticated with `device_check_key`, and
   verifies the new receipt Apple returns against `root` — currently
   `AppAttest.RootCertificate.apple_root_ca_g3/0` in production, pending the
-  open root question (#171, #174); a test
+  open root question (64x-lunicorn/Corridor#171,
+  64x-lunicorn/Corridor#174); a test
   substitutes its own, the same way `AppAttest.Attestation.validate/6`
   takes its own root explicitly.
 
@@ -185,8 +187,7 @@ defmodule AppAttest.RiskMetric do
   ## HTTP transport: the real default, `:httpc` (part of Erlang/OTP's own
   ## `:inets`, no new Hex dependency) against Apple's real host. Apple's own
   ## "Assessing fraud risk" curl example sends the header bare, with no
-  ## "Bearer " prefix — confirmed directly, where architecture #174's own
-  ## named Go reference (an unofficial, unverified package) adds one.
+  ## "Bearer " prefix, although some unofficial client libraries add one.
 
   defp http_request(%{url: url, authorization: authorization, body: body}) do
     headers = [{~c"authorization", String.to_charlist(authorization)}]
@@ -211,9 +212,9 @@ defmodule AppAttest.RiskMetric do
   ## JWT (APNs-style provider token): Apple's own "Assessing fraud risk"
   ## guide points to the identical Apple Push Notification service token
   ## procedure — ES256, header `{alg, kid}`, claims `{iss, iat}` — confirmed
-  ## against architecture #174's own named reference implementation
-  ## (takimoto3/appleapi-core's `token` package) for the header and claim
-  ## shape, independent of its own "Bearer" mistake above.
+  ## against the reference implementation takimoto3/appleapi-core's `token`
+  ## package for the header and claim shape. The `kid` is the DeviceCheck
+  ## key identifier, not a device's Key ID.
 
   defp jwt(%{key_id: key_id, team_id: team_id, private_key: private_key}) do
     header = json_base64(%{"alg" => "ES256", "kid" => key_id})
@@ -236,8 +237,8 @@ defmodule AppAttest.RiskMetric do
   # :public_key.sign/3 returns a DER `Dss-Sig-Value` SEQUENCE{r, s} (the
   # same structure DSA and ECDSA signatures both use); JWS ES256 wants the
   # raw, fixed-width pair instead (RFC 7518 section 3.4) — the same
-  # conversion architecture #174's own named reference
-  # (takimoto3/appleapi-core's `SignerECDSA.Sign`) performs by hand.
+  # conversion the reference implementation takimoto3/appleapi-core's
+  # `SignerECDSA.Sign` performs by hand.
   defp der_signature_to_raw(der_signature) do
     {:"Dss-Sig-Value", r, s} = :public_key.der_decode(:"Dss-Sig-Value", der_signature)
     pad_to_coordinate_size(r) <> pad_to_coordinate_size(s)
@@ -251,9 +252,9 @@ defmodule AppAttest.RiskMetric do
   ## Receipt verification: signature and certificate chain first (a receipt
   ## nothing has verified is not trustworthy enough to read a risk metric
   ## from at all), only then the ASN.1 attribute list. Signed attributes
-  ## (RFC 5652 section 5.4) are out of scope: every fixture this ticket
-  ## proves against, and architecture #174's own named reference
-  ## (takimoto3/app-attest), sign the content directly with none.
+  ## (RFC 5652 section 5.4) are out of scope: the receipts of the reference
+  ## implementation takimoto3/app-attest sign the content directly with
+  ## none.
 
   defp verify_and_extract(receipt_der, root) do
     with {:ok, @signed_data_oid, signed_data} <- decode_content_info(receipt_der),
@@ -354,9 +355,9 @@ defmodule AppAttest.RiskMetric do
 
   # Apple's own receipt payload (`eContent`), undocumented by any ASN.1
   # module: `SET OF SEQUENCE { type INTEGER, version INTEGER, value OCTET
-  # STRING }` ("Assessing fraud risk"; confirmed structurally against
-  # architecture #174's own named reference, takimoto3/app-attest's
-  # `fraud/receipt/receipt.go`). Every field this ticket does not need
+  # STRING }` ("Assessing fraud risk"; confirmed structurally against the
+  # reference implementation takimoto3/app-attest's
+  # `fraud/receipt/receipt.go`). Every field this module does not need
   # still has to be walked past correctly to reach the ones after it, so
   # this parses every attribute present, keyed by its own field number,
   # rather than searching only for field 17.

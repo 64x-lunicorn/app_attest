@@ -1,8 +1,7 @@
 defmodule AppAttest.Typespecs do
   @moduledoc """
   Reads a module's own declared types back off its compiled BEAM, so a test
-  can assert that a documented type lists exactly what the code returns
-  (#212).
+  can assert that a documented type lists exactly what the code returns.
 
   `AppAttest.Attestation.rejection/0` and `AppAttest.Assertion.rejection/0`
   are the contract a caller matches on, and nothing else in a compile or a

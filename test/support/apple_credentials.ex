@@ -12,7 +12,8 @@ defmodule AppAttest.AppleCredentials do
     * `APPLE_DEVICECHECK_KEY` - the same file's *contents*, for CI, where a
       secret arrives as a value rather than a path. Takes precedence over
       the path when both are set.
-    * `APPLE_DEVICECHECK_KEY_ID` - the Key ID Apple assigned that key.
+    * `APPLE_DEVICECHECK_KEY_ID` - the DeviceCheck key identifier Apple
+      assigned that key (the JWT's `kid`), not a device's Key ID.
     * `APPLE_TEAM_ID` - the Apple Developer Team ID that owns it.
 
   `available?/0` is false when any of them is missing, and `test_helper.exs`

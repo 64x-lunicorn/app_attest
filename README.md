@@ -23,20 +23,20 @@ Elixir library validating Apple's App Attest attestations and assertions, built 
 
 ## Trust the device, not the request.
 
-app_attest checks that the requests reaching your server come from a genuine, unmodified instance of your iOS app. It validates attestations and assertions against Apple's root certificate, including the certificate chain, nonce, App ID hash and a replay-safe counter. It also fetches Apple's per-device risk metric. The library keeps no state of its own: you pass in what you stored earlier and get back what to store next.
+app_attest checks that the requests reaching your server come from a genuine, unmodified instance of your iOS app. It validates attestations against Apple's App Attest root certificate, including the certificate chain, nonce, App ID hash and Key ID, and validates assertions against the public key and Counter you stored for that device, so a replayed assertion is rejected. It also fetches Apple's per-device risk metric. The library keeps no state of its own: you pass in what you stored earlier and get back what to store next.
 
 **Apple's checks, done right once, so you don't hand-write them.**
 
 | | What you get |
 | :--- | :--- |
-| **Attestation validation** | Checks the certificate chain against Apple's App Attest root, the nonce, the App ID hash and the key ID, and returns the Device to store: public key, start Counter, environment and Receipt. |
-| **Assertion validation** | Checks the signature, the App ID hash and a strictly increasing Counter, so a captured Assertion cannot be replayed. |
+| **Attestation validation** | Checks the certificate chain against Apple's App Attest root, the nonce, the App ID hash and the Key ID, and returns the Device to store: public key, start Counter, environment and Receipt. |
+| **Assertion validation** | Checks the signature against the public key stored in the Device, the App ID hash and a Counter strictly greater than the stored one, so a captured Assertion cannot be replayed. |
 | **Development and production kept apart** | Records the environment a device attested in and rejects Attestations and Assertions from the other one. |
 | **Risk metric** | Fetches Apple's per-device Risk metric and verifies its Receipt; informational only, never a reason to accept or reject. |
 | **No state of its own** | You pass in what you stored and get back what changed; storage stays in your server. |
 
 > [!NOTE]
-> Implemented: every scenario of [Spec #166](https://github.com/64x-lunicorn/Corridor/issues/166) passes. Unpublished and private until it is proven against real devices in Corridor's first TestFlight round, then published on Hex ([research 0002](https://github.com/64x-lunicorn/Corridor/blob/main/research/0002-app-attest-elixir-library/README.md)).
+> Implemented: every scenario of [Spec 64x-lunicorn/Corridor#166](https://github.com/64x-lunicorn/Corridor/issues/166) passes. Unpublished and private until it is proven against real devices in Corridor's first TestFlight round, then published on Hex ([research 0002](https://github.com/64x-lunicorn/Corridor/blob/main/research/0002-app-attest-elixir-library/README.md)).
 
 ## How it works
 

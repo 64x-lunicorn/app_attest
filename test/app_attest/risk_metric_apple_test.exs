@@ -17,7 +17,8 @@ defmodule AppAttest.RiskMetricAppleTest do
 
     * signed with the real DeviceCheck key, the request must *not* come back
       `401` — Apple verified the token and moved on to the receipt;
-    * signed with a freshly generated key under the same Key ID and Team ID,
+    * signed with a freshly generated key under the same DeviceCheck key
+      identifier and Team ID,
       the identical request must come back `401` — Apple really checks the
       signature, rather than waving through anything shaped like a JWT.
 
@@ -62,7 +63,7 @@ defmodule AppAttest.RiskMetricAppleTest do
       assert status == 400
     end
 
-    test "Apple rejects a JWT signed by a forged key under the same Key ID" do
+    test "Apple rejects a JWT signed by a forged key under the same DeviceCheck key identifier" do
       forged = %{
         AppleCredentials.device_check_key!()
         | private_key: X509.PrivateKey.new_ec(:secp256r1)

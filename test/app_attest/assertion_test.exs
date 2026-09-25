@@ -7,7 +7,7 @@ defmodule AppAttest.AssertionTest do
 
   # A well-formed 37-byte authenticator data prefix and a signature-shaped
   # value, so a test that targets one missing key of an Assertion never
-  # trips over the other one (#212).
+  # trips over the other one.
   @auth_data <<:crypto.hash(:sha256, @app_id)::binary, 0, 1::32-big>>
   @signature <<0::256>>
 

@@ -1,7 +1,7 @@
 defmodule AppAttest.Envelope do
   @moduledoc false
 
-  # The one place that knows the `cbor` package (#10). Apple's SDK hands both
+  # The one place that knows the `cbor` package. Apple's SDK hands both
   # an Attestation and an Assertion over as a CBOR object; everything this
   # module decodes comes back as plain binaries and maps, and every way a
   # raw object can fail to decode, or decode into the wrong shape, comes back
@@ -13,7 +13,7 @@ defmodule AppAttest.Envelope do
   @typedoc """
   A decoded `apple-appattest` Attestation object: its raw `authData`, its
   leaf-first `x5c` certificate chain (DER), and the raw receipt it carries
-  in `attStmt.receipt` (#11).
+  in `attStmt.receipt`.
   """
   @type attestation :: %{
           auth_data: binary(),
@@ -48,7 +48,7 @@ defmodule AppAttest.Envelope do
 
   # `CBOR.decode/1` reports malformed or non-binary input with one of its
   # own five error atoms; all of them collapse to `:error` here, so none
-  # leaves this module (#10).
+  # leaves this module.
   # Trailing bytes after the object are ignored, as they always were.
   defp decode(object) do
     case CBOR.decode(object) do
@@ -59,7 +59,7 @@ defmodule AppAttest.Envelope do
 
   # Everything a genuine Attestation object carries, taken apart in one
   # place: anything else is not an `apple-appattest` attestation object and
-  # is rejected rather than raising (#212).
+  # is rejected rather than raising.
   defp unwrap_attestation(%{
          "fmt" => "apple-appattest",
          "attStmt" => att_stmt,
@@ -85,7 +85,7 @@ defmodule AppAttest.Envelope do
   defp unwrap_assertion(_not_an_assertion), do: :error
 
   # A non-empty list of CBOR byte strings, leaf first; anything else is
-  # `:error` rather than a crash (#212).
+  # `:error` rather than a crash.
   defp unwrap_chain([_first | _rest] = x5c) do
     unwrapped = Enum.map(x5c, &unwrap_bytes/1)
 
@@ -103,7 +103,7 @@ defmodule AppAttest.Envelope do
   # Assertion's own signature and authenticatorData) in a `%CBOR.Tag{tag: :bytes, value:
   # binary}` rather than handing back the raw binary (its own README
   # explains why). Anything else — a CBOR text string, a number, a missing
-  # key's `nil` — is `:error` rather than a crash (#212): a caller's own
+  # key's `nil` — is `:error` rather than a crash: a caller's own
   # field is exactly what a forged object gets wrong.
   defp unwrap_bytes(%CBOR.Tag{tag: :bytes, value: value}) when is_binary(value), do: {:ok, value}
   defp unwrap_bytes(_not_a_cbor_byte_string), do: :error
