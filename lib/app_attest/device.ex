@@ -31,10 +31,20 @@ defmodule AppAttest.Device do
 
   defstruct [:public_key, :counter, :environment, :receipt]
 
+  @typedoc """
+  The App Attest environment a key was attested in, `:development` or
+  `:production`, as Apple's own aaguid in the Attestation names it. A key
+  attested in one environment is never accepted in the other:
+  `AppAttest.Attestation.validate/6` and `AppAttest.Assertion.validate/5`
+  both take the environment the caller expects, and
+  `AppAttest.RiskMetric.fetch/4` asks the matching Apple host.
+  """
+  @type environment :: :development | :production
+
   @type t :: %__MODULE__{
           public_key: binary(),
           counter: non_neg_integer(),
-          environment: AppAttest.AuthenticatorData.environment(),
+          environment: environment(),
           receipt: binary()
         }
 end

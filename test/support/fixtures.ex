@@ -258,6 +258,9 @@ defmodule AppAttest.Fixtures do
   * `:attested_credential_data` - `false` for only the 37-byte prefix, a
     structurally valid but malformed Attestation no genuine device would
     ever produce.
+  * `:authenticator_data` - raw authenticator data in place of the one the
+    options above build, such as a truncated one. The nonce is computed
+    over it, so only its own bytes can make the Attestation fail.
 
   And, one envelope field at a time, the CBOR value to put in that field
   as is (wrap a binary with `cbor_bytes/1` for a well-formed byte string),
@@ -293,10 +296,12 @@ defmodule AppAttest.Fixtures do
       end
 
     auth_data =
-      authenticator_data(app_id,
-        counter: Keyword.get(opts, :counter, 0),
-        attested_credential: attested_credential
-      )
+      Keyword.get_lazy(opts, :authenticator_data, fn ->
+        authenticator_data(app_id,
+          counter: Keyword.get(opts, :counter, 0),
+          attested_credential: attested_credential
+        )
+      end)
 
     nonce_extension =
       {:Extension, @nonce_extension_oid, false,

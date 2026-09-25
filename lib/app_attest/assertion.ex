@@ -28,8 +28,9 @@ defmodule AppAttest.Assertion do
     `authenticatorData`, or one of the two not a CBOR byte string. Which
     CBOR decoding failure it was is deliberately not told apart, so no atom
     of the `cbor` package reaches a caller.
-  * `:invalid_authenticator_data` - the authenticator data is truncated
-    (`AppAttest.AuthenticatorData.parse/1`).
+  * `:invalid_authenticator_data` - the authenticator data is shorter than
+    its fixed 37-byte prefix, or what follows the prefix is not
+    well-formed attested credential data.
   * `:invalid_signature` - the signature does not match the Device's
     `public_key` and `client_data`.
   * `:app_id_mismatch` - the App ID hash does not match `app_id`.
@@ -72,7 +73,7 @@ defmodule AppAttest.Assertion do
           binary(),
           String.t(),
           Device.t(),
-          AuthenticatorData.environment()
+          Device.environment()
         ) :: {:ok, Device.t()} | {:error, rejection()}
   def validate(
         assertion_object,

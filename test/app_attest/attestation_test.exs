@@ -152,6 +152,33 @@ defmodule AppAttest.AttestationTest do
                {:error, :app_id_mismatch}
     end
 
+    test "checks the Counter before the environment, in Apple's order" do
+      attestation = Fixtures.self_generated_attestation(counter: 1, aaguid: <<0::128>>)
+
+      assert validate_self_generated(attestation) == {:error, :counter_not_zero}
+    end
+
+    test "checks the environment before the credentialId, in Apple's order" do
+      other_credential_id = :crypto.hash(:sha256, "another credential")
+
+      unrecognized =
+        Fixtures.self_generated_attestation(
+          aaguid: <<0::128>>,
+          credential_id: other_credential_id
+        )
+
+      assert validate_self_generated(unrecognized) == {:error, :unrecognized_environment}
+
+      production =
+        Fixtures.self_generated_attestation(
+          aaguid: "appattest" <> <<0::56>>,
+          credential_id: other_credential_id
+        )
+
+      assert validate_self_generated(production, :development) ==
+               {:error, :environment_mismatch}
+    end
+
     test "returns the self-generated receipt with the Device it attests" do
       attestation = Fixtures.self_generated_attestation()
 
@@ -184,10 +211,34 @@ defmodule AppAttest.AttestationTest do
       assert validate_bytes(:not_a_binary) == {:error, :invalid_attestation}
     end
 
-    test "rejects an attestation whose aaguid is unrecognized instead of crashing" do
+    test "rejects an attestation without an aaguid as an unrecognized environment instead of crashing" do
       attestation = Fixtures.self_generated_attestation(attested_credential_data: false)
 
       assert validate_self_generated(attestation) == {:error, :unrecognized_environment}
+    end
+
+    test "rejects an attestation whose aaguid is neither Apple's development nor production value" do
+      attestation = Fixtures.self_generated_attestation(aaguid: <<0::128>>)
+
+      assert validate_self_generated(attestation) == {:error, :unrecognized_environment}
+    end
+
+    test "rejects authenticator data shorter than its 37-byte prefix" do
+      attestation = Fixtures.self_generated_attestation(authenticator_data: <<1, 2, 3>>)
+
+      assert validate_self_generated(attestation) == {:error, :invalid_authenticator_data}
+    end
+
+    test "rejects attested credential data whose credentialId runs past the end" do
+      # Declares a 32-byte credentialId after Apple's development aaguid but
+      # supplies none.
+      truncated =
+        Fixtures.authenticator_data(Fixtures.self_generated_attestation().app_id) <>
+          "appattestdevelop" <> <<32::16>>
+
+      attestation = Fixtures.self_generated_attestation(authenticator_data: truncated)
+
+      assert validate_self_generated(attestation) == {:error, :invalid_authenticator_data}
     end
 
     test "rejects a production Attestation where a development one is expected" do

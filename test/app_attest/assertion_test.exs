@@ -156,6 +156,23 @@ defmodule AppAttest.AssertionTest do
       end
     end
 
+    test "rejects authenticator data shorter than its 37-byte prefix" do
+      assert validate(
+               self_generated_assertion(authenticator_data: Fixtures.cbor_bytes(<<1, 2, 3>>))
+             ) ==
+               {:error, :invalid_authenticator_data}
+    end
+
+    test "rejects authenticator data whose bytes after the prefix are truncated" do
+      # A 16-byte aaguid declaring a 32-byte credentialId it never supplies.
+      truncated = Fixtures.authenticator_data(@app_id) <> "appattestdevelop" <> <<32::16>>
+
+      assert validate(
+               self_generated_assertion(authenticator_data: Fixtures.cbor_bytes(truncated))
+             ) ==
+               {:error, :invalid_authenticator_data}
+    end
+
     test "rejects an assertion whose authenticator data is not a CBOR byte string" do
       for auth_data <- ["a CBOR text string", nil, %CBOR.Tag{tag: 42, value: "tagged"}] do
         assert validate(self_generated_assertion(authenticator_data: auth_data)) ==

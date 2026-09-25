@@ -36,8 +36,8 @@ defmodule AppAttest.Attestation do
     authenticator data's credentialId, differs from it, or `key_id` is not
     base64 at all. A `key_id` that does not decode is one more Key ID that
     is not this key's, so it is not told apart.
-  * `:invalid_authenticator_data` - the authenticator data is truncated
-    (`AppAttest.AuthenticatorData.parse/1`).
+  * `:invalid_authenticator_data` - the authenticator data is shorter than
+    its fixed 37-byte prefix, or its attested credential data is truncated.
   * `:app_id_mismatch` - the App ID hash does not match `app_id`.
   * `:counter_not_zero` - the authenticator data's Counter is not 0, the
     value every freshly attested key starts at.
@@ -98,7 +98,7 @@ defmodule AppAttest.Attestation do
           binary(),
           String.t(),
           RootCertificate.der(),
-          AuthenticatorData.environment()
+          Device.environment()
         ) :: {:ok, Device.t()} | {:error, rejection()}
   def validate(attestation_object, key_id, challenge, app_id, root, expected_environment) do
     with {:ok, %{auth_data: auth_data, chain: chain, receipt: receipt}} <-
@@ -109,14 +109,13 @@ defmodule AppAttest.Attestation do
          {:ok, authenticator_data} <- AuthenticatorData.parse(auth_data),
          :ok <- AuthenticatorData.check_app_id(authenticator_data, app_id),
          :ok <- check_counter(authenticator_data.counter),
-         {:ok, environment} <-
-           check_environment(authenticator_data.aaguid, expected_environment),
+         :ok <- check_environment(authenticator_data.environment, expected_environment),
          :ok <- check_credential_id(authenticator_data.credential_id, key_id_bytes) do
       {:ok,
        %Device{
          public_key: leaf |> X509.Certificate.public_key() |> X509.PublicKey.to_der(),
          counter: authenticator_data.counter,
-         environment: environment,
+         environment: authenticator_data.environment,
          receipt: receipt
        }}
     end
@@ -157,18 +156,9 @@ defmodule AppAttest.Attestation do
   defp check_credential_id(key_id_bytes, key_id_bytes), do: :ok
   defp check_credential_id(_credential_id, _key_id_bytes), do: {:error, :key_id_mismatch}
 
-  defp check_environment(aaguid, expected_environment) do
-    case AuthenticatorData.environment(aaguid) do
-      ^expected_environment ->
-        {:ok, expected_environment}
-
-      environment when environment in [:development, :production] ->
-        {:error, :environment_mismatch}
-
-      {:error, :unrecognized_environment} = error ->
-        error
-    end
-  end
+  defp check_environment(nil, _expected_environment), do: {:error, :unrecognized_environment}
+  defp check_environment(expected_environment, expected_environment), do: :ok
+  defp check_environment(_other_environment, _expected), do: {:error, :environment_mismatch}
 
   defp check_nonce(leaf, auth_data, challenge) do
     expected_nonce = AuthenticatorData.nonce(auth_data, challenge)
