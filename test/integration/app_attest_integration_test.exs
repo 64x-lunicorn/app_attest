@@ -53,6 +53,9 @@ defmodule AppAttest.IntegrationTest do
   `validate/6`: it takes the environment the caller expects as its own
   trailing parameter, the way `AppAttest.Assertion.validate/5` already
   does, and rejects an Attestation whose aaguid yields the other one.
+  #214 added the scenario for the Key ID check #13 built: an Attestation
+  validated under a Key ID its attested public key does not yield is
+  rejected with `:key_id_mismatch`.
   """
 
   use ExUnit.Case, async: true
@@ -128,6 +131,24 @@ defmodule AppAttest.IntegrationTest do
                  :development
                )
     end
+
+    test "An attestation recorded under a Key ID that is not its own is rejected" do
+      assert {:error, :key_id_mismatch} =
+               AppAttest.Attestation.validate(
+                 AppAttest.Fixtures.attestation(),
+                 a_key_id_of_another_key(),
+                 AppAttest.Fixtures.challenge(),
+                 AppAttest.Fixtures.app_id(),
+                 AppAttest.RootCertificate.default(),
+                 :development
+               )
+    end
+  end
+
+  # A well-formed Key ID (base64 of a SHA-256, like Apple's own) that
+  # Apple's real fixture Attestation's attested public key does not yield.
+  defp a_key_id_of_another_key do
+    Base.encode64(:crypto.hash(:sha256, "another device's public key"))
   end
 
   describe "Assertion (built by #169)" do
@@ -281,10 +302,11 @@ defmodule AppAttest.IntegrationTest do
       {wrong_private_key, _wrong_public_key} = AppAttest.Fixtures.device_key_pair()
 
       # One attestation or assertion per specific check this Spec names,
-      # each built to fail exactly that check and nothing else: the three
+      # each built to fail exactly that check and nothing else: the four
       # Attestation ones deliberately mismatch one real Attestation's
-      # challenge, App ID or trusted root at a time (#168); the two
-      # Assertion ones are #169's own self-generated fixtures to build.
+      # challenge, Key ID, App ID or trusted root at a time (#168, #214);
+      # the two Assertion ones are #169's own self-generated fixtures to
+      # build.
       results = %{
         untrusted_root:
           AppAttest.Attestation.validate(
@@ -300,6 +322,15 @@ defmodule AppAttest.IntegrationTest do
             AppAttest.Fixtures.attestation(),
             AppAttest.Fixtures.key_id(),
             "a-different-challenge",
+            AppAttest.Fixtures.app_id(),
+            AppAttest.RootCertificate.default(),
+            :development
+          ),
+        key_id_mismatch:
+          AppAttest.Attestation.validate(
+            AppAttest.Fixtures.attestation(),
+            a_key_id_of_another_key(),
+            AppAttest.Fixtures.challenge(),
             AppAttest.Fixtures.app_id(),
             AppAttest.RootCertificate.default(),
             :development
