@@ -34,12 +34,13 @@ defmodule AppAttest.RootCertificate do
 
   # Apple's own general-purpose "Apple Root CA - G3", published at
   # https://www.apple.com/certificateauthority/AppleRootCA-G3.cer.
-  # App Attest *receipts* (the risk metric, #171) chain to this root, not
-  # `default/0`'s own App Attest-specific one: confirmed against Apple's own
-  # "Assessing fraud risk" documentation, which names this exact certificate
-  # as the trust anchor for a receipt's own signature - architecture #174's
-  # implementation notes assumed the same root as Attestation before this
-  # was checked against Apple's primary source.
+  # App Attest *receipts* (the risk metric, #171) are verified against this
+  # root, not `default/0`'s own App Attest-specific one, on the strength of
+  # takimoto3/app-attest's bundled `AppleRootCA-G3.cer` alone. Which root a
+  # receipt really chains to is still open (#171, #174): Apple's own
+  # "Assessing fraud risk" documentation names the App Attest root instead,
+  # and no real Apple receipt has been verified against either root yet.
+  # Corridor's first TestFlight round settles it.
   @apple_root_ca_g3_pem """
   -----BEGIN CERTIFICATE-----
   MIICQzCCAcmgAwIBAgIILcX8iNLFS5UwCgYIKoZIzj0EAwMwZzEbMBkGA1UEAwwS
@@ -73,9 +74,11 @@ defmodule AppAttest.RootCertificate do
 
   @doc """
   Apple's real, compiled-in "Apple Root CA - G3" certificate, DER-encoded:
-  the trust anchor for an App Attest receipt's own signature
-  (`AppAttest.RiskMetric`, #171), never for an Attestation's or Assertion's
-  own chain (`default/0`).
+  the root this library currently trusts for an App Attest receipt's own
+  signature (`AppAttest.RiskMetric`, #171), never for an Attestation's or
+  Assertion's own chain (`default/0`). Whether a real Apple receipt chains
+  to it, or to the App Attest root Apple's own documentation names, is
+  still open until a real receipt has been verified (#171, #174).
   """
   @spec apple_root_ca_g3() :: der()
   def apple_root_ca_g3 do

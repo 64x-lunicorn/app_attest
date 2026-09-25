@@ -4,10 +4,11 @@ defmodule AppAttest.Attestation do
   #174): its certificate chain against Apple's own App Attest root, its
   nonce against the expected challenge, its public key and credential ID
   against the app-supplied key identifier, its App ID hash against the
-  expected app, and its start Counter of 0 (#13).
+  expected app, its start Counter of 0 (#13), and its environment against
+  the one the caller expects (#211).
 
   `app_attest` holds no device state itself (CLAUDE.md, Corridor ADR
-  0006, #174): `validate/5` returns an `AppAttest.Device` with the
+  0006, #174): `validate/6` returns an `AppAttest.Device` with the
   device's public key, start Counter, App Attest environment and receipt
   for the caller to persist; it persists nothing on its own.
   """
@@ -15,7 +16,7 @@ defmodule AppAttest.Attestation do
   alias AppAttest.{AuthenticatorData, Device, Envelope, RootCertificate}
 
   @typedoc """
-  Every reason `validate/5` rejects an Attestation. A malformed Attestation
+  Every reason `validate/6` rejects an Attestation. A malformed Attestation
   is rejected with one of these, never by raising (#212): the whole point of
   this library is to distrust its own input.
 
@@ -41,6 +42,8 @@ defmodule AppAttest.Attestation do
     value every freshly attested key starts at (#13).
   * `:unrecognized_environment` - the attested credential data's aaguid is
     neither Apple's development nor production value, or missing entirely.
+  * `:environment_mismatch` - the environment the aaguid yields is not
+    `expected_environment` (#211).
   """
   @type rejection ::
           :invalid_attestation
@@ -51,6 +54,7 @@ defmodule AppAttest.Attestation do
           | :app_id_mismatch
           | :counter_not_zero
           | :unrecognized_environment
+          | :environment_mismatch
 
   # Apple's own extension OID for the nonce, carried in the credential
   # certificate (credCert): a DER SEQUENCE containing one element, a
@@ -67,25 +71,35 @@ defmodule AppAttest.Attestation do
   App Attest root, or a substitute — `AppAttest.RootCertificate`, never
   `Application` config), and binds it to `key_id`, the key identifier the
   app got from `DCAppAttestService.generateKey`, base64-encoded as Apple's
-  SDK returns it (#13).
+  SDK returns it (#13), and to `expected_environment`, the App Attest
+  environment the caller expects for this request (#211).
 
   The checks run in the order Apple's "Validating apps that connect to your
   server" lists them: the certificate chain (step 1), the nonce (2-4), the
   SHA-256 of the credential certificate's public key in X9.62 uncompressed
   point format against `key_id` (5), the App ID hash (6), a Counter of 0
-  (7), the aaguid's environment (8) and the credentialId against `key_id`
-  (9). The first failing check decides the rejection.
+  (7), the aaguid's environment against `expected_environment` (8) and the
+  credentialId against `key_id` (9). The first failing check decides the
+  rejection. A development Attestation is never accepted where a
+  production one is expected, or the reverse, the way
+  `AppAttest.Assertion.validate/5` already rejects an Assertion.
 
   Returns `{:ok, device}`, an `AppAttest.Device` with the device's public
   key, start Counter, App Attest environment (`:development` or
-  `:production`, read from the attestation's own `aaguid`, #170) and the
-  receipt the Attestation carried in `attStmt.receipt` (the one the first
-  `AppAttest.RiskMetric.fetch/5` sends, #11) for the caller to persist, or
-  `{:error, rejection}`.
+  `:production`, read from the attestation's own `aaguid`, #170, and so
+  always `expected_environment`) and the receipt the Attestation carried
+  in `attStmt.receipt` (the one the first `AppAttest.RiskMetric.fetch/5`
+  sends, #11) for the caller to persist, or `{:error, rejection}`.
   """
-  @spec validate(binary(), String.t(), binary(), String.t(), RootCertificate.der()) ::
-          {:ok, Device.t()} | {:error, rejection()}
-  def validate(attestation_object, key_id, challenge, app_id, root) do
+  @spec validate(
+          binary(),
+          String.t(),
+          binary(),
+          String.t(),
+          RootCertificate.der(),
+          AuthenticatorData.environment()
+        ) :: {:ok, Device.t()} | {:error, rejection()}
+  def validate(attestation_object, key_id, challenge, app_id, root, expected_environment) do
     with {:ok, %{auth_data: auth_data, chain: chain, receipt: receipt}} <-
            Envelope.decode_attestation(attestation_object),
          {:ok, leaf} <- leaf_certificate(chain),
@@ -95,7 +109,8 @@ defmodule AppAttest.Attestation do
          {:ok, authenticator_data} <- AuthenticatorData.parse(auth_data),
          :ok <- AuthenticatorData.check_app_id(authenticator_data, app_id),
          :ok <- check_counter(authenticator_data.counter),
-         {:ok, environment} <- check_environment(authenticator_data.aaguid),
+         {:ok, environment} <-
+           check_environment(authenticator_data.aaguid, expected_environment),
          :ok <- check_credential_id(authenticator_data.credential_id, key_id_bytes) do
       {:ok,
        %Device{
@@ -142,10 +157,16 @@ defmodule AppAttest.Attestation do
   defp check_credential_id(key_id_bytes, key_id_bytes), do: :ok
   defp check_credential_id(_credential_id, _key_id_bytes), do: {:error, :key_id_mismatch}
 
-  defp check_environment(aaguid) do
+  defp check_environment(aaguid, expected_environment) do
     case AuthenticatorData.environment(aaguid) do
-      environment when environment in [:development, :production] -> {:ok, environment}
-      {:error, :unrecognized_environment} = error -> error
+      ^expected_environment ->
+        {:ok, expected_environment}
+
+      environment when environment in [:development, :production] ->
+        {:error, :environment_mismatch}
+
+      {:error, :unrecognized_environment} = error ->
+        error
     end
   end
 

@@ -29,24 +29,45 @@ app_attest checks that the requests reaching your server come from a genuine, un
 
 | | What you get |
 | :--- | :--- |
-| **Attestation validation** | Checks the certificate chain against Apple's App Attest root, the nonce, the App ID hash and the key ID, and returns the public key and start Counter to store. |
+| **Attestation validation** | Checks the certificate chain against Apple's App Attest root, the nonce, the App ID hash and the key ID, and returns the Device to store: public key, start Counter, environment and Receipt. |
 | **Assertion validation** | Checks the signature, the App ID hash and a strictly increasing Counter, so a captured Assertion cannot be replayed. |
-| **Development and production kept apart** | Records the environment a device attested in and rejects Assertions from the other one. |
-| **Risk metric** | Fetches Apple's per-device Risk metric and verifies its receipt; informational only, never a reason to accept or reject. |
+| **Development and production kept apart** | Records the environment a device attested in and rejects Attestations and Assertions from the other one. |
+| **Risk metric** | Fetches Apple's per-device Risk metric and verifies its Receipt; informational only, never a reason to accept or reject. |
 | **No state of its own** | You pass in what you stored and get back what changed; storage stays in your server. |
 
 > [!NOTE]
-> Nothing is built yet: the five tickets of [Spec #166](https://github.com/64x-lunicorn/Corridor/issues/166) are in progress. Private until published on Hex after Corridor's first TestFlight round ([research 0002](https://github.com/64x-lunicorn/Corridor/blob/main/research/0002-app-attest-elixir-library/README.md)).
+> Implemented: every scenario of [Spec #166](https://github.com/64x-lunicorn/Corridor/issues/166) passes. Unpublished and private until it is proven against real devices in Corridor's first TestFlight round, then published on Hex ([research 0002](https://github.com/64x-lunicorn/Corridor/blob/main/research/0002-app-attest-elixir-library/README.md)).
 
 ## How it works
 
 ```text
-iOS app --attestation--> your server --> AppAttest.Attestation.validate --> Device: public key, Counter, environment, receipt (you store it)
+iOS app --attestation--> your server --> AppAttest.Attestation.validate --> Device: public key, Counter, environment, Receipt (you store it)
 iOS app --assertion----> your server --> AppAttest.Assertion.validate   --> Device with the new Counter (you store it)
-                         your server --> AppAttest.RiskMetric.fetch     --> Risk metric and new receipt (you record them)
+                         your server --> AppAttest.RiskMetric.fetch     --> Risk metric and new Receipt (you record them)
 ```
 
 Every function takes the state your server stored earlier as input and returns what changed, so storage, timing and refresh stay with the caller.
+
+```elixir
+root = AppAttest.RootCertificate.default()
+
+# Once per key: validate the Attestation and store the Device it returns.
+{:ok, device} =
+  AppAttest.Attestation.validate(attestation_object, key_id, challenge, app_id, root, :production)
+
+# Per request: validate the Assertion and store the Device with its new Counter.
+{:ok, device} =
+  AppAttest.Assertion.validate(assertion_object, client_data, app_id, device, :production)
+
+# Now and then: record the Risk metric and store the new Receipt.
+{:ok, %{risk_metric: risk_metric, receipt: receipt}} =
+  AppAttest.RiskMetric.fetch(
+    device.receipt,
+    device.environment,
+    device_check_key,
+    AppAttest.RootCertificate.apple_root_ca_g3()
+  )
+```
 
 ## Quickstart
 
@@ -76,18 +97,18 @@ Every function takes the state your server stored earlier as input and returns w
 
 ## Where the design lives
 
-This repository is greenfield — everything about *what* to build and *why* is tracked on `64x-lunicorn/Corridor`, not here:
+Everything about *what* this library does and *why* is tracked on `64x-lunicorn/Corridor`, not here:
 
 - [Spec #166](https://github.com/64x-lunicorn/Corridor/issues/166) — domain behaviour and acceptance criteria
 - [Architecture #174](https://github.com/64x-lunicorn/Corridor/issues/174) — component design, decisions, implementation order
-- [Wayfinder #175](https://github.com/64x-lunicorn/Corridor/issues/175) — start here for which ticket to pick up next: #172 (integration tests) → #168 → #169 → #170 → #171
+- [Wayfinder #175](https://github.com/64x-lunicorn/Corridor/issues/175) — the Spec's tickets and the order they were built in
 - Licensed Apache-2.0 per [ADR 0008](https://github.com/64x-lunicorn/Corridor/blob/main/docs/adr/0008-the-app-attest-library-is-licensed-apache-2-0.md)
 
 ## Documentation
 
 | Guide | Start here when you want to... |
 | :--- | :--- |
-| [Terms](CONTEXT.md) | Look up what Attestation, Assertion, Counter and Risk metric mean here. |
+| [Terms](CONTEXT.md) | Look up what Attestation, Assertion, Counter, Risk metric, Device, Key ID and Receipt mean here. |
 | [CI/CD](docs/ci-cd.md) | Understand the gate, run it locally and see the rules on `main`. |
 | [Contributing](CONTRIBUTING.md) | Set up development, run the checks and submit a focused change. |
 | [Security policy](SECURITY.md) | Report a vulnerability privately. |
@@ -100,7 +121,7 @@ Bug reports and focused pull requests are welcome. Run the whole gate locally be
 mix ci
 ```
 
-New behaviour starts as a Spec and tickets in `64x-lunicorn/Corridor`; the next ticket to pick up is on [Wayfinder #175](https://github.com/64x-lunicorn/Corridor/issues/175).
+New behaviour starts as a Spec and tickets in `64x-lunicorn/Corridor`.
 
 Use synthetic data in examples, tests and issues. See [CONTRIBUTING.md](CONTRIBUTING.md) for the checks and what a change needs.
 

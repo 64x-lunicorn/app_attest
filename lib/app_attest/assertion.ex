@@ -49,7 +49,7 @@ defmodule AppAttest.Assertion do
   produces — against `client_data` (the request-specific data the caller
   asked the device to sign, typically embedding a fresh server challenge),
   `app_id` (`"<Team ID>.<bundle ID>"`) and `device`, the caller's stored
-  `AppAttest.Device` (what `AppAttest.Attestation.validate/5` returned, or
+  `AppAttest.Device` (what `AppAttest.Attestation.validate/6` returned, or
   the previous Assertion moved on): its `public_key`, `counter` and
   `environment`.
 

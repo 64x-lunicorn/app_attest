@@ -8,14 +8,15 @@ defmodule AppAttest.Fixtures do
 
   The Spec's own domain rule 6 (#166) — validation is trusted only once
   proven against Attestations Apple actually issued, not only against
-  self-generated data — is why this ticket (#168) proves its "genuine
-  Attestation is accepted" scenario against these real bytes rather than
-  self-generated ones. The three rejection scenarios reuse the very same
-  bytes with one input deliberately wrong at a time (wrong challenge, wrong
-  App ID, wrong root), so each is proven to fail for that one specific
+  self-generated data — is why the "genuine Attestation is accepted"
+  scenario is proven against these real bytes rather than self-generated
+  ones. The Attestation rejection scenarios reuse the very same bytes with
+  one input to `AppAttest.Attestation.validate/6` deliberately wrong at a
+  time (such as the challenge, the App ID, the Key ID, the root or the
+  expected environment), so each is proven to fail for that one specific
   reason (Spec domain rule 7) without needing separate self-generated
   fixtures for them. Domain rule 6 names Attestations specifically: no real
-  device Assertion is recorded, so `device_key_pair/0` and `assertion/3`
+  device Assertion is recorded, so `device_key_pair/0` and `assertion/4`
   build self-signed Assertion data instead (#169's own implementation
   notes).
   """
@@ -128,8 +129,8 @@ defmodule AppAttest.Fixtures do
 
   Mirrors `attestation/0`'s own "wrong App ID hash" pattern: build one fixed
   fixture, then vary the *expected* app ID or client data passed to
-  `validate/5` to construct a mismatch, rather than varying the fixture
-  itself.
+  `AppAttest.Assertion.validate/5` to construct a mismatch, rather than
+  varying the fixture itself.
 
   Both the signature and the authenticator data are wrapped in
   `%CBOR.Tag{tag: :bytes}` before encoding, so they decode back the same
@@ -151,7 +152,7 @@ defmodule AppAttest.Fixtures do
 
   @doc """
   A throwaway root and leaf certificate pair standing in for a receipt's
-  real chain to Apple's own "Apple Root CA - G3"
+  real chain to the root `AppAttest.RiskMetric` trusts in production
   (`AppAttest.RootCertificate.apple_root_ca_g3/0`, #171): `root` is the
   substitute trusted root a test passes to `AppAttest.RiskMetric.fetch/5`
   in place of the real one; `leaf` and `leaf_key` sign a receipt built by

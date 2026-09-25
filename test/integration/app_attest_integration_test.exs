@@ -5,51 +5,31 @@ defmodule AppAttest.IntegrationTest do
   functions, the way a real caller such as Corridor's server (Spec #165) would
   — never through their internals (architecture #174).
 
-  Each test name is a Spec #166 scenario name, verbatim, and each is tagged
-  `:pending` because the module it drives does not exist yet. `test_helper.exs`
-  excludes `:pending` from the required `Test` check; the advisory
-  `Pending scenarios` check (`.claude/64x-lunicorn.yml`) runs `mix test --only
-  pending` so every one of them visibly fails for its missing behaviour, not
-  for a bug in its own setup. A later ticket removes one test's `pending` tag
-  at a time as it builds the behaviour that test names (order: #175).
+  Each test name is a Spec #166 scenario name, verbatim, and every one of
+  them runs in the required `Test` check. The public functions it drives:
 
-  The exact shape of what `validate/N` and `fetch/N` accept and return was
-  this harness's own first draft, taken from architecture #174's Flow
-  diagram; the ticket that first made a test pass was free to adjust it —
-  #168 did, for `AppAttest.Attestation.validate/5`: it takes the raw,
-  CBOR-encoded attestation object Apple's SDK produces, so its own fixtures
-  (`AppAttest.Fixtures`, `test/support/`) are a real, Apple-issued
-  development Attestation, reused under MIT license from
-  uebelack/node-app-attest (Spec #166's own domain rule 6: proven against
-  Attestations Apple actually issued, not only self-generated data). #169
-  did too, for `AppAttest.Assertion.validate/4`: it drops the placeholder's
-  environment parameters (#170's to add) and takes the raw, CBOR-encoded
-  assertion object Apple's SDK produces; domain rule 6 names Attestations
-  only, so its fixtures (`AppAttest.Fixtures.device_key_pair/0` and
-  `assertion/3`) are self-generated instead. #170 did too, for
-  `AppAttest.Assertion.validate/6`: it takes the environment the caller
-  expects for this request as its own trailing parameter, compared against
-  the stored environment #168 recorded, rather than the placeholder's
-  approximation of that shape. A follow-up widened it to `validate/7`:
-  Apple's own on-device API signs every real Assertion over
-  `authenticatorData` concatenated with a caller-supplied `client_data`'s
-  hash, never `authenticatorData` alone (confirmed against Apple's
-  "Validating apps that connect to your server" guide and architecture
-  #174's own reference implementations), so `client_data` joins the
-  parameter list and `AppAttest.Fixtures.assertion/4` signs over the same
-  nonce construction. #171 did too, for `AppAttest.RiskMetric.
-  fetch/5`: the placeholder guessed a per-device lookup keyed by #168's key
-  ID; #171's own primary-source check of Apple's "Assessing fraud risk"
-  documentation found the real request keyed by the device's current
-  *receipt* instead, with an explicit `root` (mirroring
-  `AppAttest.Attestation.validate/5`'s own) and an `opts[:transport]` seam
-  standing in for Apple's own endpoint - domain rule 6 names Attestations
-  only, so `AppAttest.Fixtures.receipt/2`'s receipt is self-signed too.
-  #11 then carried one `AppAttest.Device` through all three:
-  `AppAttest.Attestation.validate/5` returns it, receipt included, and
-  `AppAttest.Assertion.validate/5` takes it in place of `validate/7`'s
-  public key, stored Counter and stored environment, returning it with
-  the Counter moved on.
+    * `AppAttest.Attestation.validate/6` - the raw, CBOR-encoded Attestation
+      object Apple's SDK produces, its Key ID, the server's challenge, the
+      App ID, the trusted root and the environment the caller expects;
+      returns the `AppAttest.Device` the caller stores.
+    * `AppAttest.Assertion.validate/5` - the raw, CBOR-encoded Assertion
+      object, the `client_data` the device signed over, the App ID, the
+      stored `AppAttest.Device` and the environment the caller expects;
+      returns the Device with its Counter moved on.
+    * `AppAttest.RiskMetric.fetch/5` - the Device's current receipt, its
+      environment, the DeviceCheck key, the trusted root and an
+      `opts[:transport]` seam standing in for Apple's own endpoint.
+
+  Its data comes from `AppAttest.Fixtures` (`test/support/`). The
+  Attestation is a real, Apple-issued development Attestation, reused under
+  MIT license from uebelack/node-app-attest, because Spec #166's domain
+  rule 6 trusts validation only once proven against Attestations Apple
+  actually issued. That rule names Attestations only, so the device key
+  pair (`AppAttest.Fixtures.device_key_pair/0`), the Assertions
+  (`AppAttest.Fixtures.assertion/4`) and the receipts
+  (`AppAttest.Fixtures.receipt/2`) are self-generated. Every rejection
+  scenario changes one input at a time against otherwise valid data, so it
+  fails for that one reason (domain rule 7).
   """
 
   use ExUnit.Case, async: true
@@ -71,7 +51,7 @@ defmodule AppAttest.IntegrationTest do
      }}
   end
 
-  describe "Attestation (built by #168)" do
+  describe "Attestation" do
     test "A genuine attestation is accepted" do
       assert {:ok,
               %AppAttest.Device{
@@ -85,7 +65,8 @@ defmodule AppAttest.IntegrationTest do
                  AppAttest.Fixtures.key_id(),
                  AppAttest.Fixtures.challenge(),
                  AppAttest.Fixtures.app_id(),
-                 AppAttest.RootCertificate.default()
+                 AppAttest.RootCertificate.default(),
+                 :development
                )
     end
 
@@ -96,7 +77,8 @@ defmodule AppAttest.IntegrationTest do
                  AppAttest.Fixtures.key_id(),
                  AppAttest.Fixtures.challenge(),
                  AppAttest.Fixtures.app_id(),
-                 AppAttest.Fixtures.untrusted_root()
+                 AppAttest.Fixtures.untrusted_root(),
+                 :development
                )
     end
 
@@ -107,7 +89,8 @@ defmodule AppAttest.IntegrationTest do
                  AppAttest.Fixtures.key_id(),
                  "a-different-challenge",
                  AppAttest.Fixtures.app_id(),
-                 AppAttest.RootCertificate.default()
+                 AppAttest.RootCertificate.default(),
+                 :development
                )
     end
 
@@ -118,12 +101,31 @@ defmodule AppAttest.IntegrationTest do
                  AppAttest.Fixtures.key_id(),
                  AppAttest.Fixtures.challenge(),
                  "a-different-app-id-hash",
-                 AppAttest.RootCertificate.default()
+                 AppAttest.RootCertificate.default(),
+                 :development
+               )
+    end
+
+    test "An attestation recorded under a Key ID that is not its own is rejected" do
+      assert {:error, :key_id_mismatch} =
+               AppAttest.Attestation.validate(
+                 AppAttest.Fixtures.attestation(),
+                 a_key_id_of_another_key(),
+                 AppAttest.Fixtures.challenge(),
+                 AppAttest.Fixtures.app_id(),
+                 AppAttest.RootCertificate.default(),
+                 :development
                )
     end
   end
 
-  describe "Assertion (built by #169)" do
+  # A well-formed Key ID (base64 of a SHA-256, like Apple's own) that
+  # Apple's real fixture Attestation's attested public key does not yield.
+  defp a_key_id_of_another_key do
+    Base.encode64(:crypto.hash(:sha256, "another device's public key"))
+  end
+
+  describe "Assertion" do
     test "A genuine assertion with an increasing Counter is accepted" do
       {private_key, device} = stored_device(41)
       client_data = AppAttest.Fixtures.client_data()
@@ -191,7 +193,23 @@ defmodule AppAttest.IntegrationTest do
     end
   end
 
-  describe "Development vs production (built by #170)" do
+  describe "Development vs production" do
+    test "A production attestation is never accepted as a development one, or the reverse" do
+      # Apple's real development Attestation, otherwise entirely genuine:
+      # right chain, nonce, Key ID and App ID. Only the caller's expected
+      # environment differs from the one its own aaguid yields, so this
+      # proves the environment check rejects on its own.
+      assert {:error, :environment_mismatch} =
+               AppAttest.Attestation.validate(
+                 AppAttest.Fixtures.attestation(),
+                 AppAttest.Fixtures.key_id(),
+                 AppAttest.Fixtures.challenge(),
+                 AppAttest.Fixtures.app_id(),
+                 AppAttest.RootCertificate.default(),
+                 _expected_environment = :production
+               )
+    end
+
     test "A production assertion is never accepted as a development one, or the reverse" do
       {private_key, device} = stored_device(41, :development)
       client_data = AppAttest.Fixtures.client_data()
@@ -213,7 +231,7 @@ defmodule AppAttest.IntegrationTest do
     end
   end
 
-  describe "Risk metric (built by #171)" do
+  describe "Risk metric" do
     test "The risk metric never changes a validation outcome" do
       {private_key, device} = stored_device(41)
       client_data = AppAttest.Fixtures.client_data()
@@ -251,17 +269,18 @@ defmodule AppAttest.IntegrationTest do
     end
   end
 
-  describe "Every rejection is deliberately constructed, not assumed (spans #168 and #169)" do
+  describe "Every rejection is deliberately constructed, not assumed" do
     test "Every rejection case is proven, not only assumed" do
       {private_key, device} = stored_device(41)
       client_data = AppAttest.Fixtures.client_data()
       {wrong_private_key, _wrong_public_key} = AppAttest.Fixtures.device_key_pair()
 
       # One attestation or assertion per specific check this Spec names,
-      # each built to fail exactly that check and nothing else: the three
+      # each built to fail exactly that check and nothing else: the four
       # Attestation ones deliberately mismatch one real Attestation's
-      # challenge, App ID or trusted root at a time (#168); the two
-      # Assertion ones are #169's own self-generated fixtures to build.
+      # challenge, Key ID, App ID or trusted root at a time (#168, #214);
+      # the two Assertion ones are self-generated
+      # (`AppAttest.Fixtures.assertion/4`).
       results = %{
         untrusted_root:
           AppAttest.Attestation.validate(
@@ -269,7 +288,8 @@ defmodule AppAttest.IntegrationTest do
             AppAttest.Fixtures.key_id(),
             AppAttest.Fixtures.challenge(),
             AppAttest.Fixtures.app_id(),
-            AppAttest.Fixtures.untrusted_root()
+            AppAttest.Fixtures.untrusted_root(),
+            :development
           ),
         nonce_mismatch:
           AppAttest.Attestation.validate(
@@ -277,7 +297,17 @@ defmodule AppAttest.IntegrationTest do
             AppAttest.Fixtures.key_id(),
             "a-different-challenge",
             AppAttest.Fixtures.app_id(),
-            AppAttest.RootCertificate.default()
+            AppAttest.RootCertificate.default(),
+            :development
+          ),
+        key_id_mismatch:
+          AppAttest.Attestation.validate(
+            AppAttest.Fixtures.attestation(),
+            a_key_id_of_another_key(),
+            AppAttest.Fixtures.challenge(),
+            AppAttest.Fixtures.app_id(),
+            AppAttest.RootCertificate.default(),
+            :development
           ),
         app_id_mismatch:
           AppAttest.Attestation.validate(
@@ -285,7 +315,8 @@ defmodule AppAttest.IntegrationTest do
             AppAttest.Fixtures.key_id(),
             AppAttest.Fixtures.challenge(),
             "a-different-app-id-hash",
-            AppAttest.RootCertificate.default()
+            AppAttest.RootCertificate.default(),
+            :development
           ),
         counter_not_increasing:
           AppAttest.Assertion.validate(
