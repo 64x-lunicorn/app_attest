@@ -1,7 +1,66 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="340" viewBox="0 0 1200 340" role="img" aria-labelledby="title">
-  <!-- write-readme placeholder: replace this file with the project banner. -->
-  <title id="title">app_attest banner placeholder</title>
-  <rect width="1200" height="340" fill="#1e293b"/>
-  <text x="600" y="170" fill="#f8fafc" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="64" font-weight="700" text-anchor="middle">app_attest</text>
-  <text x="600" y="230" fill="#94a3b8" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="24" text-anchor="middle">Banner placeholder</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="340" viewBox="0 0 1200 340" fill="none" role="img" aria-labelledby="title desc">
+  <title id="title">app_attest - trust the device, not the request</title>
+  <desc id="desc">A dark violet banner showing an iPhone sending a signed request through a certificate chain up to Apple's root and into a server-side check. Certificate chain, nonce, replay-safe counter.</desc>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1200" y2="340" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#110D17"/>
+      <stop offset="1" stop-color="#261A33"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="690" y1="250" x2="1130" y2="100" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#A77BC4"/>
+      <stop offset="1" stop-color="#7FD1B9"/>
+    </linearGradient>
+    <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
+      <circle cx="1" cy="1" r="1" fill="#A99BB8" opacity=".16"/>
+    </pattern>
+  </defs>
+  <rect width="1200" height="340" rx="24" fill="url(#background)"/>
+  <rect width="1200" height="340" rx="24" fill="url(#grid)"/>
+  <rect x="1" y="1" width="1198" height="338" rx="23" stroke="#6E4A7E" stroke-opacity=".5"/>
+  <g font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif">
+    <rect x="60" y="48" width="178" height="28" rx="14" fill="#A77BC4" fill-opacity=".14" stroke="#A77BC4" stroke-opacity=".4"/>
+    <circle cx="78" cy="62" r="4" fill="#7FD1B9"/>
+    <text x="91" y="67" fill="#E3D3EE" font-size="12" font-weight="600" letter-spacing="1.5">ELIXIR LIBRARY</text>
+    <text x="57" y="171" fill="#F7F3FA" font-size="88" font-weight="700" letter-spacing="-4">app_attest<tspan fill="#7FD1B9">.</tspan></text>
+    <text x="60" y="218" fill="#E2DAEA" font-size="27" font-weight="400">Trust the device, not the request.</text>
+    <text x="60" y="271" fill="#A99BB8" font-size="15" letter-spacing=".5">CERTIFICATE CHAIN / NONCE / REPLAY-SAFE COUNTER</text>
+  </g>
+
+  <!-- the device: an iPhone holding its App Attest key -->
+  <rect x="664" y="96" width="92" height="176" rx="18" fill="#1A1322" stroke="#C9A8DD" stroke-width="2"/>
+  <rect x="696" y="106" width="28" height="6" rx="3" fill="#C9A8DD" opacity=".5"/>
+  <circle cx="710" cy="178" r="17" stroke="#7FD1B9" stroke-width="3"/>
+  <path d="M722 190L742 210M734 202L740 196M738 206L743 201" stroke="#7FD1B9" stroke-width="3" stroke-linecap="round"/>
+  <path d="M686 240H734M686 254H720" stroke="#C9A8DD" stroke-width="3" stroke-linecap="round" opacity=".45"/>
+
+  <!-- the signed request travelling to the server -->
+  <g stroke="url(#accent)" stroke-width="2" stroke-linecap="round">
+    <path d="M770 184H826" stroke-dasharray="4 8" opacity=".8"/>
+    <path d="M966 184H1016" stroke-dasharray="4 8" opacity=".8"/>
+    <circle cx="1070" cy="184" r="70" stroke-opacity=".12"/>
+    <circle cx="1070" cy="184" r="100" stroke-opacity=".07"/>
+  </g>
+
+  <!-- the certificate chain: leaf, intermediate, Apple's root -->
+  <g fill="#1F1629" stroke="#B48CCB" stroke-width="1.5">
+    <rect x="852" y="80" width="100" height="56" rx="12" stroke-opacity=".5"/>
+    <rect x="834" y="146" width="124" height="60" rx="12" stroke-opacity=".75"/>
+    <rect x="840" y="216" width="112" height="64" rx="12"/>
+  </g>
+  <g stroke="#B48CCB" stroke-width="2" stroke-linecap="round" opacity=".6">
+    <path d="M900 136V146M900 206V216"/>
+  </g>
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" font-weight="600" fill="#E3D3EE">
+    <text x="868" y="113">root</text>
+    <text x="850" y="181">intermediate</text>
+    <text x="858" y="253">leaf</text>
+  </g>
+  <circle cx="928" cy="249" r="8" fill="#7FD1B9"/>
+
+  <!-- the server-side check, with the counter it just moved forward -->
+  <circle cx="1070" cy="184" r="40" fill="#1F1629" stroke="url(#accent)" stroke-width="2"/>
+  <path d="M1052 185L1065 198L1089 172" stroke="#7FD1B9" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="1046" y="262" fill="#A99BB8" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="13" font-weight="600" letter-spacing="1">n → n+1</text>
+  <circle cx="1140" cy="104" r="4" fill="#A77BC4" opacity=".6"/>
+  <circle cx="1000" cy="296" r="4" fill="#7FD1B9" opacity=".6"/>
 </svg>
