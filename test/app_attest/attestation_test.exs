@@ -1,7 +1,7 @@
 defmodule AppAttest.AttestationTest do
   use ExUnit.Case, async: true
 
-  alias AppAttest.{Attestation, Typespecs}
+  alias AppAttest.{Attestation, Device, Fixtures, RootCertificate, Typespecs}
 
   # Apple's own nonce extension OID (architecture #174, `Attestation`'s own
   # `@nonce_extension_oid`): a DER SEQUENCE containing one element, a
@@ -17,6 +17,16 @@ defmodule AppAttest.AttestationTest do
   # A well-formed 37-byte authenticator data prefix, so a test that targets
   # one malformed field of an Attestation never trips over this one.
   @auth_data <<:crypto.hash(:sha256, @app_id)::binary, 0, 0::32-big>>
+
+  # The same prefix followed by Apple's development aaguid and an empty
+  # credential ID: the smallest authenticator data an Attestation is
+  # accepted with, so a self-generated one can reach every check.
+  @development_auth_data @auth_data <> "appattestdevelop" <> <<0::16>>
+
+  # SHA-256 of the receipt the real fixture Attestation carries in its own
+  # `attStmt.receipt` (3759 bytes), taken once from the fixture itself, so
+  # the expected value does not come from the code under test.
+  @fixture_receipt_sha256 "4e52998201baa1a9c2572f8560d5737bca64dbf62e7a240abddb08bf967df2ec"
 
   # Every rejection below happens before the chain is checked against a root,
   # so which root is passed cannot change the outcome.
@@ -51,7 +61,14 @@ defmodule AppAttest.AttestationTest do
   # own tests do with a fresh self-signed certificate), so only the nonce
   # and App ID hash need to line up.
   defp self_generated_attestation_without_attested_credential_data do
-    expected_nonce = :crypto.hash(:sha256, @auth_data <> :crypto.hash(:sha256, @challenge))
+    self_generated_attestation(@auth_data, %{"receipt" => bytes("a-receipt")})
+  end
+
+  # A self-signed attestation object over `auth_data`, its `attStmt` being
+  # the leaf certificate plus exactly `att_stmt_fields`, returned alongside
+  # the leaf to pass as the trusted root.
+  defp self_generated_attestation(auth_data, att_stmt_fields) do
+    expected_nonce = :crypto.hash(:sha256, auth_data <> :crypto.hash(:sha256, @challenge))
 
     nonce_extension =
       {:Extension, @nonce_extension_oid, false, @nonce_extension_wrapper <> expected_nonce}
@@ -64,10 +81,56 @@ defmodule AppAttest.AttestationTest do
       )
       |> X509.Certificate.to_der()
 
-    {attestation_object(%{"x5c" => [bytes(leaf_der)]}, bytes(@auth_data)), leaf_der}
+    att_stmt = Map.put(att_stmt_fields, "x5c", [bytes(leaf_der)])
+    {attestation_object(att_stmt, bytes(auth_data)), leaf_der}
   end
 
   describe "validate/5" do
+    test "returns a Device carrying the receipt a genuine Attestation brought in attStmt.receipt" do
+      assert {:ok, %Device{} = device} =
+               Attestation.validate(
+                 Fixtures.attestation(),
+                 Fixtures.key_id(),
+                 Fixtures.challenge(),
+                 Fixtures.app_id(),
+                 RootCertificate.default()
+               )
+
+      assert %Device{counter: 0, environment: :development, public_key: {{:ECPoint, _}, _}} =
+               device
+
+      assert Base.encode16(:crypto.hash(:sha256, device.receipt), case: :lower) ==
+               @fixture_receipt_sha256
+    end
+
+    test "returns the self-generated receipt with the Device it attests" do
+      {attestation_object, leaf_der} =
+        self_generated_attestation(@development_auth_data, %{"receipt" => bytes("a-receipt")})
+
+      assert {:ok, %Device{receipt: "a-receipt", counter: 0, environment: :development}} =
+               Attestation.validate(attestation_object, "key-id", @challenge, @app_id, leaf_der)
+    end
+
+    test "rejects an otherwise genuine attestation whose attStmt carries no receipt" do
+      {attestation_object, leaf_der} = self_generated_attestation(@development_auth_data, %{})
+
+      assert Attestation.validate(attestation_object, "key-id", @challenge, @app_id, leaf_der) ==
+               {:error, :invalid_attestation}
+    end
+
+    test "rejects an attestation whose receipt is not a CBOR byte string" do
+      {attestation_object, leaf_der} =
+        self_generated_attestation(@development_auth_data, %{"receipt" => "a CBOR text string"})
+
+      assert Attestation.validate(attestation_object, "key-id", @challenge, @app_id, leaf_der) ==
+               {:error, :invalid_attestation}
+    end
+
+    test "rejects an attestation object that is not CBOR at all as an invalid attestation" do
+      assert validate(<<0xFF>>) == {:error, :invalid_attestation}
+      assert validate(<<>>) == {:error, :invalid_attestation}
+    end
+
     test "rejects an attestation whose aaguid is unrecognized instead of crashing" do
       {attestation_object, leaf_der} =
         self_generated_attestation_without_attested_credential_data()
@@ -102,11 +165,6 @@ defmodule AppAttest.AttestationTest do
   describe "rejection/0" do
     test "lists every reason validate/5 can return" do
       assert Typespecs.union_atoms(Attestation, :rejection) == [
-               :cbor_function_clause_error,
-               :cbor_match_error,
-               :cbor_case_clause_error,
-               :cbor_decoder_error,
-               :cannot_decode_non_binary_values,
                :invalid_attestation,
                :untrusted_root,
                :nonce_mismatch,

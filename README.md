@@ -41,9 +41,9 @@ app_attest checks that the requests reaching your server come from a genuine, un
 ## How it works
 
 ```text
-iOS app --attestation--> your server --> AppAttest.Attestation.validate --> public key, Counter, environment (you store them)
-iOS app --assertion----> your server --> AppAttest.Assertion.validate   --> new Counter (you store it)
-                         your server --> AppAttest.RiskMetric.fetch     --> Risk metric (you record it)
+iOS app --attestation--> your server --> AppAttest.Attestation.validate --> Device: public key, Counter, environment, receipt (you store it)
+iOS app --assertion----> your server --> AppAttest.Assertion.validate   --> Device with the new Counter (you store it)
+                         your server --> AppAttest.RiskMetric.fetch     --> Risk metric and new receipt (you record them)
 ```
 
 Every function takes the state your server stored earlier as input and returns what changed, so storage, timing and refresh stay with the caller.

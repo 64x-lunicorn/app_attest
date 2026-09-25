@@ -9,3 +9,5 @@ The words this project uses with one fixed meaning, one paragraph each. Code, is
 **Counter**: A number that must strictly increase with every Assertion from a device, used to detect a captured Assertion being replayed.
 
 **Risk metric**: Apple's own signal, fetched per device from its servers, estimating how many distinct devices have used the same attested key; informational only, never a reason to accept or reject.
+
+**Device**: What a caller stores per attested key — its public key, Counter, environment and current receipt — returned by an Attestation and moved on by every Assertion; app_attest itself never stores it.

@@ -69,8 +69,7 @@ defmodule AppAttest.Fixtures do
   """
   @spec certificate_chain() :: [AppAttest.RootCertificate.der(), ...]
   def certificate_chain do
-    {:ok, %{"attStmt" => %{"x5c" => x5c}}, _rest} = CBOR.decode(attestation())
-    {:ok, chain} = AppAttest.Attestation.unwrap_chain(x5c)
+    {:ok, %{chain: chain}} = AppAttest.Envelope.decode_attestation(attestation())
     chain
   end
 
@@ -202,21 +201,6 @@ defmodule AppAttest.Fixtures do
       team_id: "TEAMID1234",
       private_key: X509.PrivateKey.new_ec(:secp256r1)
     }
-  end
-
-  @doc """
-  The receipt embedded in the fixture Attestation's own `attStmt.receipt`:
-  a real, Apple-issued receipt, but one issued to `uebelack/node-app-attest`'s
-  own team and long expired, so Apple answers a risk-metric request carrying
-  it with an error rather than a new receipt
-  (`AppAttest.RiskMetricAppleTest`).
-  """
-  @spec attestation_receipt() :: binary()
-  def attestation_receipt do
-    {:ok, %{"attStmt" => %{"receipt" => %CBOR.Tag{tag: :bytes, value: receipt}}}, _rest} =
-      CBOR.decode(attestation())
-
-    receipt
   end
 
   @doc """

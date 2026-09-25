@@ -24,20 +24,6 @@ defmodule AppAttest.AuthenticatorData do
   @typedoc "Which App Attest environment a device was attested in (#170)."
   @type environment :: :development | :production
 
-  @typedoc """
-  What `CBOR.decode/1` itself returns when a raw Attestation or Assertion
-  object is not well-formed CBOR at all. Declared here, in the module both
-  `AppAttest.Attestation` and `AppAttest.Assertion` share their CBOR
-  handling with, so each can list it in its own `rejection()` without
-  repeating the `cbor` package's own five atoms (#212).
-  """
-  @type cbor_error ::
-          :cbor_function_clause_error
-          | :cbor_match_error
-          | :cbor_case_clause_error
-          | :cbor_decoder_error
-          | :cannot_decode_non_binary_values
-
   # Apple's own two fixed aaguid values (architecture #174, confirmed against
   # Apple's "Validating apps that connect to your server" and the Spec's own
   # reference implementation takimoto3/app-attest): 16 bytes, either the
@@ -140,19 +126,6 @@ defmodule AppAttest.AuthenticatorData do
   def environment(@aaguid_development), do: :development
   def environment(@aaguid_production), do: :production
   def environment(_other), do: {:error, :unrecognized_environment}
-
-  @doc false
-  # Shared with `AppAttest.Attestation` and `AppAttest.Assertion`: the `cbor`
-  # package wraps every decoded CBOR byte string (the format Apple uses for
-  # authData, each x5c certificate, an Assertion's own signature and
-  # authenticatorData) in a `%CBOR.Tag{tag: :bytes, value: binary}`, rather
-  # than handing back the raw binary directly (its own README explains why).
-  # Anything else — a CBOR text string, a number, a missing key's `nil` —
-  # comes back `:error` rather than raising (#212): a caller's own field is
-  # exactly what a forged object gets wrong.
-  @spec unwrap_bytes(term()) :: {:ok, binary()} | :error
-  def unwrap_bytes(%CBOR.Tag{tag: :bytes, value: value}) when is_binary(value), do: {:ok, value}
-  def unwrap_bytes(_not_a_cbor_byte_string), do: :error
 
   defp app_id_matches?(%__MODULE__{app_id_hash: app_id_hash}, app_id) do
     app_id_hash == :crypto.hash(:sha256, app_id)
