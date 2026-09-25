@@ -103,8 +103,8 @@ defmodule AppAttest.Receipt do
     with {:ok, signed_data} <- decode_signed_data(receipt),
          {:ok, content, signature, signer_id, certificates} <- signed_content(signed_data),
          {:ok, chain} <- signer_chain(signer_id, certificates),
-         :ok <- verify_chain(root, chain),
-         :ok <- verify_signature(content, signature, chain),
+         {:ok, leaf} <- verify_chain(root, chain),
+         :ok <- verify_signature(content, signature, leaf),
          {:ok, attributes} <- parse_attributes(content) do
       extract_fields(attributes)
     end
@@ -140,35 +140,41 @@ defmodule AppAttest.Receipt do
 
   # `certificates` (RFC 5652's `CertificateSet`) comes back decoded, as
   # `{:certificate, cert_record}` per entry; matching the SignerInfo's own
-  # issuer and serial number against each finds the signer regardless of
-  # how Apple orders the set.
+  # issuer and serial number against each record's finds the signer
+  # regardless of how Apple orders the set. Returns the set's DER, signer
+  # first, for `AppAttest.RootCertificate.trusted_leaf/2`, which decodes
+  # each certificate once.
   defp signer_chain({:issuerAndSerialNumber, {:IssuerAndSerialNumber, issuer, serial}}, certs) do
-    parsed =
-      for {:certificate, record} <- List.wrap(certs),
-          der = :public_key.der_encode(:Certificate, record),
-          {:ok, certificate} <- [RootCertificate.parse(der)],
-          do: {der, certificate}
+    records = for {:certificate, record} <- List.wrap(certs), do: record
 
-    case Enum.find(parsed, fn {_der, cert} -> signed_by?(cert, issuer, serial) end) do
+    case Enum.find(records, &signed_by?(&1, issuer, serial)) do
       nil -> {:error, :untrusted_receipt}
-      {leaf_der, leaf} -> {:ok, [{leaf_der, leaf} | List.delete(parsed, {leaf_der, leaf})]}
+      signer -> {:ok, Enum.map([signer | List.delete(records, signer)], &encode/1)}
     end
   end
 
   defp signer_chain(_other_signer_id, _certs), do: {:error, :invalid_receipt}
 
-  defp signed_by?(certificate, issuer, serial) do
-    X509.Certificate.issuer(certificate) == issuer and
-      X509.Certificate.serial(certificate) == serial
+  defp signed_by?({:Certificate, tbs_certificate, _algorithm, _signature}, issuer, serial) do
+    match?(
+      {:TBSCertificate, _version, ^serial, _signature, ^issuer, _, _, _, _, _, _},
+      tbs_certificate
+    )
   end
+
+  defp signed_by?(_not_a_certificate, _issuer, _serial), do: false
+
+  defp encode(record), do: :public_key.der_encode(:Certificate, record)
 
   defp verify_chain(root, chain) do
-    if RootCertificate.trusted?(root, Enum.map(chain, &elem(&1, 0))),
-      do: :ok,
-      else: {:error, :untrusted_receipt}
+    case RootCertificate.trusted_leaf(root, chain) do
+      {:ok, leaf} -> {:ok, leaf}
+      {:error, :malformed_chain} -> {:error, :invalid_receipt}
+      {:error, :untrusted_chain} -> {:error, :untrusted_receipt}
+    end
   end
 
-  defp verify_signature(content, signature, [{_leaf_der, leaf} | _rest]) do
+  defp verify_signature(content, signature, leaf) do
     if :public_key.verify(content, :sha256, signature, X509.Certificate.public_key(leaf)),
       do: :ok,
       else: {:error, :untrusted_receipt}

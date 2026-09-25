@@ -262,36 +262,10 @@ defmodule AppAttest.AttestationTest do
              ) == {:error, :invalid_attestation}
     end
 
-    # OTP's certificate decoding and path validation raise or exit in many
-    # different ways for DER that is damaged deep inside, not only for
-    # junk. A fixed seed keeps the positions, and so the test, deterministic.
-    test "rejects Apple's real fixture with any single byte of a certificate changed instead of crashing" do
-      chain = Fixtures.certificate_chain()
-      state = :rand.seed_s(:exsss, {16, 16, 16})
-
-      Enum.reduce(0..(length(chain) - 1), state, fn index, state ->
-        Enum.reduce(1..200, state, fn _mutation, state ->
-          der = Enum.at(chain, index)
-          {position, state} = :rand.uniform_s(byte_size(der), state)
-          mutated_chain = List.replace_at(chain, index, Fixtures.flip_byte(der, position - 1))
-
-          result =
-            Attestation.validate(
-              Fixtures.attestation_with_chain(mutated_chain),
-              Fixtures.key_id(),
-              Fixtures.challenge(),
-              Fixtures.app_id(),
-              RootCertificate.default(),
-              :development
-            )
-
-          # A changed certificate is never trusted, whether it still
-          # decodes or not.
-          assert result in [{:error, :invalid_attestation}, {:error, :untrusted_root}]
-          state
-        end)
-      end)
-    end
+    # Any single byte of a certificate changed is proven rejected, never a
+    # crash, once, at `AppAttest.RootCertificate.trusted_leaf/2` in its own
+    # test file; the two tests around this comment prove how Attestation
+    # translates its two reasons.
 
     test "rejects Apple's real fixture against a root that is not a certificate instead of crashing" do
       assert Attestation.validate(

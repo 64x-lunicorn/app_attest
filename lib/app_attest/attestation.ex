@@ -103,8 +103,7 @@ defmodule AppAttest.Attestation do
   def validate(attestation_object, key_id, challenge, app_id, root, expected_environment) do
     with {:ok, %{auth_data: auth_data, chain: chain, receipt: receipt}} <-
            Envelope.decode_attestation(attestation_object),
-         {:ok, leaf} <- parse_chain(chain),
-         :ok <- check_trusted_chain(root, chain),
+         {:ok, leaf} <- check_trusted_chain(root, chain),
          :ok <- check_nonce(leaf, auth_data, challenge),
          {:ok, key_id_bytes} <- check_public_key_hash(leaf, key_id),
          {:ok, authenticator_data} <- AuthenticatorData.parse(auth_data),
@@ -123,20 +122,15 @@ defmodule AppAttest.Attestation do
     end
   end
 
-  # Every certificate of the chain is parsed before path validation, not
-  # only the leaf: junk in place of an intermediate is a malformed
-  # Attestation, rejected here rather than raised on inside OTP's path
-  # validation. Returns the parsed leaf.
-  defp parse_chain([_leaf_der | _rest_of_chain] = chain) do
-    [leaf | _rest] = parsed = Enum.map(chain, &RootCertificate.parse/1)
-
-    if Enum.all?(parsed, &match?({:ok, _certificate}, &1)),
-      do: leaf,
-      else: {:error, :invalid_attestation}
-  end
-
+  # Junk in place of any certificate of the chain, not only the leaf, is a
+  # malformed Attestation; a well-formed chain that does not lead to `root`
+  # is an untrusted one. Returns the trusted, decoded leaf.
   defp check_trusted_chain(root, chain) do
-    if RootCertificate.trusted?(root, chain), do: :ok, else: {:error, :untrusted_root}
+    case RootCertificate.trusted_leaf(root, chain) do
+      {:ok, leaf} -> {:ok, leaf}
+      {:error, :malformed_chain} -> {:error, :invalid_attestation}
+      {:error, :untrusted_chain} -> {:error, :untrusted_root}
+    end
   end
 
   # Apple's step 5: the Key ID is the SHA-256 of the credential
