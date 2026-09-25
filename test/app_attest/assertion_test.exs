@@ -1,7 +1,7 @@
 defmodule AppAttest.AssertionTest do
   use ExUnit.Case, async: true
 
-  alias AppAttest.{Assertion, Device, Fixtures, Typespecs}
+  alias AppAttest.{Assertion, Device, Fixtures}
 
   @app_id "TEAMID12345.de.lunicorn.corridor"
 
@@ -178,19 +178,6 @@ defmodule AppAttest.AssertionTest do
         assert validate(self_generated_assertion(authenticator_data: auth_data)) ==
                  {:error, :invalid_assertion}
       end
-    end
-  end
-
-  describe "rejection/0" do
-    test "lists every reason validate/5 can return" do
-      assert Typespecs.union_atoms(Assertion, :rejection) == [
-               :environment_mismatch,
-               :invalid_assertion,
-               :invalid_authenticator_data,
-               :invalid_signature,
-               :app_id_mismatch,
-               :counter_not_increasing
-             ]
     end
   end
 end

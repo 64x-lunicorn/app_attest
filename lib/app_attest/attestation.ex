@@ -102,12 +102,12 @@ defmodule AppAttest.Attestation do
         ) :: {:ok, Device.t()} | {:error, rejection()}
   def validate(attestation_object, key_id, challenge, app_id, root, expected_environment) do
     with {:ok, %{auth_data: auth_data, chain: chain, receipt: receipt}} <-
-           Envelope.decode_attestation(attestation_object),
+           decode(attestation_object),
          {:ok, leaf} <- check_trusted_chain(root, chain),
          :ok <- check_nonce(leaf, auth_data, challenge),
          {:ok, key_id_bytes} <- check_public_key_hash(leaf, key_id),
-         {:ok, authenticator_data} <- AuthenticatorData.parse(auth_data),
-         :ok <- AuthenticatorData.check_app_id(authenticator_data, app_id),
+         {:ok, authenticator_data} <- parse_authenticator_data(auth_data),
+         :ok <- check_app_id(authenticator_data, app_id),
          :ok <- check_counter(authenticator_data.counter),
          :ok <- check_environment(authenticator_data.environment, expected_environment),
          :ok <- check_credential_id(authenticator_data.credential_id, key_id_bytes) do
@@ -118,6 +118,29 @@ defmodule AppAttest.Attestation do
          environment: authenticator_data.environment,
          receipt: receipt
        }}
+    end
+  end
+
+  # Envelope, AuthenticatorData and RootCertificate each speak their own
+  # reasons; every atom of `rejection/0` is minted here, at this seam.
+  defp decode(attestation_object) do
+    case Envelope.decode_attestation(attestation_object) do
+      {:ok, attestation} -> {:ok, attestation}
+      {:error, :malformed_object} -> {:error, :invalid_attestation}
+    end
+  end
+
+  defp parse_authenticator_data(auth_data) do
+    case AuthenticatorData.parse(auth_data) do
+      {:ok, authenticator_data} -> {:ok, authenticator_data}
+      {:error, :truncated} -> {:error, :invalid_authenticator_data}
+    end
+  end
+
+  defp check_app_id(authenticator_data, app_id) do
+    case AuthenticatorData.check_app_id(authenticator_data, app_id) do
+      :ok -> :ok
+      {:error, :other_app_id} -> {:error, :app_id_mismatch}
     end
   end
 

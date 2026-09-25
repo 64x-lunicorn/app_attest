@@ -83,13 +83,35 @@ defmodule AppAttest.Assertion do
         expected_environment
       ) do
     with :ok <- check_environment(device.environment, expected_environment),
-         {:ok, %{signature: signature, auth_data: auth_data}} <-
-           Envelope.decode_assertion(assertion_object),
-         {:ok, authenticator_data} <- AuthenticatorData.parse(auth_data),
+         {:ok, %{signature: signature, auth_data: auth_data}} <- decode(assertion_object),
+         {:ok, authenticator_data} <- parse_authenticator_data(auth_data),
          :ok <- check_signature(auth_data, client_data, signature, public_key),
-         :ok <- AuthenticatorData.check_app_id(authenticator_data, app_id),
+         :ok <- check_app_id(authenticator_data, app_id),
          {:ok, counter} <- check_counter(authenticator_data, stored_counter) do
       {:ok, %Device{device | counter: counter}}
+    end
+  end
+
+  # Envelope and AuthenticatorData each speak their own reasons; every atom
+  # of `rejection/0` is minted here, at this seam.
+  defp decode(assertion_object) do
+    case Envelope.decode_assertion(assertion_object) do
+      {:ok, assertion} -> {:ok, assertion}
+      {:error, :malformed_object} -> {:error, :invalid_assertion}
+    end
+  end
+
+  defp parse_authenticator_data(auth_data) do
+    case AuthenticatorData.parse(auth_data) do
+      {:ok, authenticator_data} -> {:ok, authenticator_data}
+      {:error, :truncated} -> {:error, :invalid_authenticator_data}
+    end
+  end
+
+  defp check_app_id(authenticator_data, app_id) do
+    case AuthenticatorData.check_app_id(authenticator_data, app_id) do
+      :ok -> :ok
+      {:error, :other_app_id} -> {:error, :app_id_mismatch}
     end
   end
 

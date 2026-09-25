@@ -150,7 +150,7 @@ defmodule AppAttest.RiskMetric do
     case transport.(request) do
       {:ok, 200, body} ->
         with {:ok, new_receipt} <- decode_base64(body),
-             {:ok, verified} <- Receipt.verify(new_receipt, root) do
+             {:ok, verified} <- verify_receipt(new_receipt, root) do
           risk_metric_fields(verified, %Device{device | receipt: new_receipt})
         end
 
@@ -159,6 +159,18 @@ defmodule AppAttest.RiskMetric do
 
       {:error, reason} ->
         {:error, {:transport_error, reason}}
+    end
+  end
+
+  # Receipt's own reasons are translated here, at this seam, so every atom
+  # of `rejection/0` is minted in this module, as `AppAttest.Attestation`
+  # does with `AppAttest.RootCertificate`'s. Each keeps its meaning: the
+  # new receipt does not verify, or is not a well-formed Receipt.
+  defp verify_receipt(receipt, root) do
+    case Receipt.verify(receipt, root) do
+      {:ok, verified} -> {:ok, verified}
+      {:error, :untrusted_receipt} -> {:error, :untrusted_receipt}
+      {:error, :invalid_receipt} -> {:error, :invalid_receipt}
     end
   end
 

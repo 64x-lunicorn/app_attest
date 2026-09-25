@@ -5,10 +5,11 @@ defmodule AppAttest.Envelope do
   # an Attestation and an Assertion over as a CBOR object; everything this
   # module decodes comes back as plain binaries and maps, and every way a
   # raw object can fail to decode, or decode into the wrong shape, comes back
-  # as `:invalid_attestation` or `:invalid_assertion`. So neither
-  # `AppAttest.Attestation.rejection/0` nor `AppAttest.Assertion.rejection/0`
-  # names a `cbor` atom a caller would have to match on, and upgrading or
-  # swapping the `cbor` package changes this module only.
+  # as this module's own `:malformed_object`, which `AppAttest.Attestation`
+  # and `AppAttest.Assertion` each translate into their own public reason at
+  # their seam. So no `cbor` atom reaches a caller, no public reason is
+  # minted here, and upgrading or swapping the `cbor` package changes this
+  # module only.
 
   @typedoc """
   A decoded `apple-appattest` Attestation object: its raw `authData`, its
@@ -25,24 +26,24 @@ defmodule AppAttest.Envelope do
   @type assertion :: %{signature: binary(), auth_data: binary()}
 
   @doc false
-  @spec decode_attestation(term()) :: {:ok, attestation()} | {:error, :invalid_attestation}
+  @spec decode_attestation(term()) :: {:ok, attestation()} | {:error, :malformed_object}
   def decode_attestation(attestation_object) do
     with {:ok, decoded} <- decode(attestation_object),
          {:ok, attestation} <- unwrap_attestation(decoded) do
       {:ok, attestation}
     else
-      :error -> {:error, :invalid_attestation}
+      :error -> {:error, :malformed_object}
     end
   end
 
   @doc false
-  @spec decode_assertion(term()) :: {:ok, assertion()} | {:error, :invalid_assertion}
+  @spec decode_assertion(term()) :: {:ok, assertion()} | {:error, :malformed_object}
   def decode_assertion(assertion_object) do
     with {:ok, decoded} <- decode(assertion_object),
          {:ok, assertion} <- unwrap_assertion(decoded) do
       {:ok, assertion}
     else
-      :error -> {:error, :invalid_assertion}
+      :error -> {:error, :malformed_object}
     end
   end
 

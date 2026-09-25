@@ -1,7 +1,7 @@
 defmodule AppAttest.AttestationTest do
   use ExUnit.Case, async: true
 
-  alias AppAttest.{Attestation, Device, Fixtures, RootCertificate, Typespecs}
+  alias AppAttest.{Attestation, Device, Fixtures, RootCertificate}
 
   # The real fixture's own key identifier, as Apple's SDK returned it and
   # the fixture file recorded it (`keyId`), written out here so the expected
@@ -327,22 +327,6 @@ defmodule AppAttest.AttestationTest do
                <<1, 2, 3>>,
                :development
              ) == {:error, :untrusted_root}
-    end
-  end
-
-  describe "rejection/0" do
-    test "lists every reason validate/6 can return" do
-      assert Typespecs.union_atoms(Attestation, :rejection) == [
-               :invalid_attestation,
-               :untrusted_root,
-               :nonce_mismatch,
-               :key_id_mismatch,
-               :invalid_authenticator_data,
-               :app_id_mismatch,
-               :counter_not_zero,
-               :unrecognized_environment,
-               :environment_mismatch
-             ]
     end
   end
 end

@@ -49,12 +49,12 @@ defmodule AppAttest.AuthenticatorData do
           credential_id: binary() | nil
         }
 
-  # Parses raw authenticator data into its fields. Fails with
-  # `:invalid_authenticator_data` when `data` is shorter than the fixed
+  # Parses raw authenticator data into its fields. Fails with this module's
+  # own `:truncated`, which its callers translate at their seam, when `data` is shorter than the fixed
   # 37-byte prefix, or carries a truncated attested credential data (a
   # credential ID length that its own remaining bytes cannot satisfy).
   @doc false
-  @spec parse(binary()) :: {:ok, t()} | {:error, :invalid_authenticator_data}
+  @spec parse(binary()) :: {:ok, t()} | {:error, :truncated}
   def parse(<<app_id_hash::binary-size(32), flags::8, counter::32-big, rest::binary>>) do
     case parse_attested_credential_data(rest) do
       {:ok, aaguid, credential_id} ->
@@ -71,23 +71,24 @@ defmodule AppAttest.AuthenticatorData do
         {:ok, %__MODULE__{app_id_hash: app_id_hash, flags: flags, counter: counter}}
 
       :error ->
-        {:error, :invalid_authenticator_data}
+        {:error, :truncated}
     end
   end
 
-  def parse(_too_short), do: {:error, :invalid_authenticator_data}
+  def parse(_too_short), do: {:error, :truncated}
 
   # Checks `authenticator_data`'s App ID hash against `app_id`
   # (`"<Team ID>.<bundle ID>"`), the check both `AppAttest.Attestation` and
   # `AppAttest.Assertion` make identically, kept in one place so the two
-  # cannot drift apart.
+  # cannot drift apart. Fails with this module's own `:other_app_id`, which
+  # its callers translate at their seam.
   @doc false
-  @spec check_app_id(t(), String.t()) :: :ok | {:error, :app_id_mismatch}
+  @spec check_app_id(t(), String.t()) :: :ok | {:error, :other_app_id}
   def check_app_id(%__MODULE__{app_id_hash: app_id_hash}, app_id) do
     if app_id_hash == :crypto.hash(:sha256, app_id) do
       :ok
     else
-      {:error, :app_id_mismatch}
+      {:error, :other_app_id}
     end
   end
 

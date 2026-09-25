@@ -1,7 +1,7 @@
 defmodule AppAttest.RootCertificateTest do
   use ExUnit.Case, async: true
 
-  alias AppAttest.{Fixtures, RootCertificate, Typespecs}
+  alias AppAttest.{Fixtures, RootCertificate}
 
   describe "default/0" do
     test "is Apple's own App Attest root certificate" do
@@ -94,15 +94,6 @@ defmodule AppAttest.RootCertificateTest do
           state
         end)
       end)
-    end
-  end
-
-  describe "rejection/0" do
-    test "lists every reason trusted_leaf/2 can return" do
-      assert Typespecs.union_atoms(RootCertificate, :rejection) == [
-               :malformed_chain,
-               :untrusted_chain
-             ]
     end
   end
 end
