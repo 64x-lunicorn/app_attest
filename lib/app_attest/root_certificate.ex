@@ -6,7 +6,7 @@ defmodule AppAttest.RootCertificate do
   The root is always an explicit parameter of every function that needs
   it, never `Application` config or a compile-time flag: `default/0`
   hands back the real Apple root as compiled-in data, but a caller (or a
-  test, per architecture #174) can substitute any other DER-encoded
+  test) can substitute any other DER-encoded
   certificate to construct the chains it needs, including ones that
   must be rejected.
   """
@@ -34,10 +34,11 @@ defmodule AppAttest.RootCertificate do
 
   # Apple's own general-purpose "Apple Root CA - G3", published at
   # https://www.apple.com/certificateauthority/AppleRootCA-G3.cer.
-  # App Attest *receipts* (the risk metric, #171) are verified against this
+  # App Attest *receipts* (the Risk metric) are verified against this
   # root, not `default/0`'s own App Attest-specific one, on the strength of
   # takimoto3/app-attest's bundled `AppleRootCA-G3.cer` alone. Which root a
-  # receipt really chains to is still open (#171, #174): Apple's own
+  # receipt really chains to is still open (64x-lunicorn/Corridor#171,
+  # 64x-lunicorn/Corridor#174): Apple's own
   # "Assessing fraud risk" documentation names the App Attest root instead,
   # and no real Apple receipt has been verified against either root yet.
   # Corridor's first TestFlight round settles it.
@@ -75,10 +76,11 @@ defmodule AppAttest.RootCertificate do
   @doc """
   Apple's real, compiled-in "Apple Root CA - G3" certificate, DER-encoded:
   the root this library currently trusts for an App Attest receipt's own
-  signature (`AppAttest.RiskMetric`, #171), never for an Attestation's or
+  signature (`AppAttest.RiskMetric`), never for an Attestation's or
   Assertion's own chain (`default/0`). Whether a real Apple receipt chains
   to it, or to the App Attest root Apple's own documentation names, is
-  still open until a real receipt has been verified (#171, #174).
+  still open until a real receipt has been verified
+  (64x-lunicorn/Corridor#171, 64x-lunicorn/Corridor#174).
   """
   @spec apple_root_ca_g3() :: der()
   def apple_root_ca_g3 do
@@ -91,7 +93,7 @@ defmodule AppAttest.RootCertificate do
   Whether `chain` — a leaf-first list of DER-encoded certificates, as
   Apple's `x5c` array carries them, not including `root` itself — chains
   to the trusted `root` certificate. Junk in place of `root` or of any
-  certificate in `chain` is `false`, never a raise (#16).
+  certificate in `chain` is `false`, never a raise.
 
   Certificate validity periods are not checked. App Attest's own leaf
   certificates are short-lived by design (Apple issues a fresh one per
@@ -105,7 +107,7 @@ defmodule AppAttest.RootCertificate do
   def trusted?(root, [_ | _] = chain) when is_binary(root) do
     # OTP's path validation raises on anything that is not a DER
     # certificate, so `root` and every certificate of `chain` are parsed
-    # first: junk anywhere means no trusted chain, never a crash (#16).
+    # first: junk anywhere means no trusted chain, never a crash.
     Enum.all?([root | chain], &match?({:ok, _certificate}, parse(&1))) and
       path_valid?(root, Enum.reverse(chain))
   end
@@ -116,7 +118,7 @@ defmodule AppAttest.RootCertificate do
   # input straight from a device, and OTP's ASN.1 decoder signals damage
   # with raises, exits and throws of many kinds (`X509.Certificate.from_der/1`
   # turns only a `MatchError` into an error tuple), so every kind is caught:
-  # any failure to decode is a malformed certificate, never a crash (#16).
+  # any failure to decode is a malformed certificate, never a crash.
   @spec parse(der()) :: {:ok, X509.Certificate.t()} | :error
   def parse(der) do
     case X509.Certificate.from_der(der) do
@@ -130,7 +132,7 @@ defmodule AppAttest.RootCertificate do
   # A certificate that parses can still be damaged where only path
   # validation looks (its validity times, its extensions), and OTP's
   # `pkix_path_validation/3` then raises or exits instead of returning an
-  # error, for the same reason `parse/1` catches every kind (#16).
+  # error, for the same reason `parse/1` catches every kind.
   defp path_valid?(root, path) do
     case :public_key.pkix_path_validation(root, path, verify_fun: {&accept_expired/3, []}) do
       {:ok, _} -> true

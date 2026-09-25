@@ -3,7 +3,7 @@ defmodule AppAttest.AttestationTest do
 
   alias AppAttest.{Attestation, Device, Fixtures, RootCertificate, Typespecs}
 
-  # Apple's own nonce extension OID (architecture #174, `Attestation`'s own
+  # Apple's own nonce extension OID (`Attestation`'s own
   # `@nonce_extension_oid`): a DER SEQUENCE containing one element, a
   # context-tag [1] wrapping an OCTET STRING of the 32-byte nonce.
   # `check_nonce/3` only skips this fixed-size wrapper, never re-validates
@@ -37,7 +37,7 @@ defmodule AppAttest.AttestationTest do
 
   # A well-formed `apple-appattest` envelope whose `attStmt` and `authData`
   # are exactly what the caller passes, so one malformed field at a time can
-  # be put in an otherwise intact Attestation (#212).
+  # be put in an otherwise intact Attestation.
   defp attestation_object(att_stmt, auth_data) do
     CBOR.encode(%{
       "fmt" => "apple-appattest",

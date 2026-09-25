@@ -1,11 +1,11 @@
 defmodule AppAttest.IntegrationTest do
   @moduledoc """
-  Black-box harness for Spec #166: every scenario drives `AppAttest.Attestation`,
-  `AppAttest.Assertion` and `AppAttest.RiskMetric` only through their public
-  functions, the way a real caller such as Corridor's server (Spec #165) would
-  — never through their internals (architecture #174).
+  Black-box harness for Spec 64x-lunicorn/Corridor#166: every scenario drives
+  `AppAttest.Attestation`, `AppAttest.Assertion` and `AppAttest.RiskMetric`
+  only through their public functions, the way a real caller such as
+  Corridor's server would — never through their internals.
 
-  Each test name is a Spec #166 scenario name, verbatim, and every one of
+  Each test name is one of that Spec's scenario names, verbatim, and every one of
   them runs in the required `Test` check. The public functions it drives:
 
     * `AppAttest.Attestation.validate/6` - the raw, CBOR-encoded Attestation
@@ -22,14 +22,16 @@ defmodule AppAttest.IntegrationTest do
 
   Its data comes from `AppAttest.Fixtures` (`test/support/`). The
   Attestation is a real, Apple-issued development Attestation, reused under
-  MIT license from uebelack/node-app-attest, because Spec #166's domain
-  rule 6 trusts validation only once proven against Attestations Apple
-  actually issued. That rule names Attestations only, so the device key
+  MIT license from uebelack/node-app-attest, because of the Spec's domain
+  rule "Validation is trusted only once it has been proven against
+  Attestations Apple actually issued, not only against self-generated
+  data." That rule names Attestations only, so the device key
   pair (`AppAttest.Fixtures.device_key_pair/0`), the Assertions
   (`AppAttest.Fixtures.assertion/4`) and the receipts
   (`AppAttest.Fixtures.receipt/2`) are self-generated. Every rejection
   scenario changes one input at a time against otherwise valid data, so it
-  fails for that one reason (domain rule 7).
+  fails for that one reason, per the domain rule "Every rejection case is
+  deliberately constructed and tested, not left to accident."
   """
 
   use ExUnit.Case, async: true
@@ -56,9 +58,9 @@ defmodule AppAttest.IntegrationTest do
       assert {:ok,
               %AppAttest.Device{
                 public_key: _public_key,
-                counter: _start_counter,
+                counter: 0,
                 environment: :development,
-                receipt: _receipt
+                receipt: receipt
               }} =
                AppAttest.Attestation.validate(
                  AppAttest.Fixtures.attestation(),
@@ -68,6 +70,8 @@ defmodule AppAttest.IntegrationTest do
                  AppAttest.RootCertificate.default(),
                  :development
                )
+
+      assert is_binary(receipt) and byte_size(receipt) > 0
     end
 
     test "An attestation with an untrusted certificate chain is rejected" do
@@ -215,7 +219,7 @@ defmodule AppAttest.IntegrationTest do
       client_data = AppAttest.Fixtures.client_data()
       # Otherwise entirely genuine: right signature, right App ID, an
       # increasing Counter. Only the caller's expected environment differs
-      # from the one #168 recorded at attestation time, so this proves the
+      # from the one recorded at attestation time, so this proves the
       # environment check rejects on its own, not by accident alongside
       # another check.
       assertion = AppAttest.Fixtures.assertion(42, @app_id, client_data, private_key)
@@ -278,7 +282,7 @@ defmodule AppAttest.IntegrationTest do
       # One attestation or assertion per specific check this Spec names,
       # each built to fail exactly that check and nothing else: the four
       # Attestation ones deliberately mismatch one real Attestation's
-      # challenge, Key ID, App ID or trusted root at a time (#168, #214);
+      # challenge, Key ID, App ID or trusted root at a time;
       # the two Assertion ones are self-generated
       # (`AppAttest.Fixtures.assertion/4`).
       results = %{

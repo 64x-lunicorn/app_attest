@@ -24,7 +24,7 @@ defmodule AppAttest.EnvelopeTest do
 
       assert is_binary(auth_data)
       assert {:ok, _certificate} = X509.Certificate.from_der(leaf)
-      # Apple's receipt is a PKCS#7/CMS ContentInfo (#11).
+      # Apple's receipt is a PKCS#7/CMS ContentInfo.
       assert {:ContentInfo, _signed_data_oid, _content} =
                :public_key.der_decode(:ContentInfo, receipt)
     end

@@ -16,7 +16,7 @@ defmodule AppAttest.MixProject do
   def application do
     [
       # :inets (for :httpc) and :ssl: AppAttest.RiskMetric's own HTTP call to
-      # Apple's real risk-metric endpoint (#171). Both ship with Erlang/OTP
+      # Apple's real risk-metric endpoint. Both ship with Erlang/OTP
       # itself, so this adds no new Hex dependency.
       extra_applications: [:logger, :inets, :ssl]
     ]

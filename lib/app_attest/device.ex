@@ -1,6 +1,6 @@
 defmodule AppAttest.Device do
   @moduledoc """
-  What a caller persists per attested key (#11): the key's public key, its
+  What a caller persists per attested key: the key's public key, its
   Counter, the App Attest environment it was attested in, and its current
   receipt for the next Risk metric fetch.
 
@@ -8,15 +8,15 @@ defmodule AppAttest.Device do
   `AppAttest.Assertion.validate/5` takes the stored one and returns it with
   the Counter moved on; `AppAttest.RiskMetric.fetch/5` takes its `receipt`
   and returns the next one to store in its place. `app_attest` itself never
-  stores it (CLAUDE.md, Corridor ADR 0006): the caller persists the struct
-  and passes it back in.
+  stores it (Corridor ADR 0006): storage belongs to the consuming server, so
+  the caller persists the struct and passes it back in.
 
     * `:public_key` - the attested key's public key, from the Attestation's
       credential certificate.
     * `:counter` - the last accepted Counter; an Assertion is accepted only
       with a strictly greater one.
     * `:environment` - `:development` or `:production`, the environment the
-      key was attested in (#170).
+      key was attested in.
     * `:receipt` - the device's current receipt: the one the Attestation
       carried in `attStmt.receipt` at first, later the one the previous
       `AppAttest.RiskMetric.fetch/5` returned.

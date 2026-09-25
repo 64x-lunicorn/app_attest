@@ -39,7 +39,7 @@ mv ~/Downloads/AuthKey_XXXXXXXXXX.p8 ~/.config/app_attest/
 chmod 600 ~/.config/app_attest/AuthKey_XXXXXXXXXX.p8
 
 export APPLE_DEVICECHECK_KEY_FILE=~/.config/app_attest/AuthKey_XXXXXXXXXX.p8
-export APPLE_DEVICECHECK_KEY_ID=XXXXXXXXXX   # the Key ID Apple assigned
+export APPLE_DEVICECHECK_KEY_ID=XXXXXXXXXX   # the DeviceCheck key identifier Apple assigned
 export APPLE_TEAM_ID=YYYYYYYYYY              # your Apple Developer Team ID
 ```
 
