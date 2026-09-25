@@ -69,8 +69,7 @@ defmodule AppAttest.Fixtures do
   """
   @spec certificate_chain() :: [AppAttest.RootCertificate.der(), ...]
   def certificate_chain do
-    {:ok, %{"attStmt" => %{"x5c" => x5c}}, _rest} = CBOR.decode(attestation())
-    {:ok, chain} = AppAttest.Attestation.unwrap_chain(x5c)
+    {:ok, %{chain: chain}} = AppAttest.Envelope.decode_attestation(attestation())
     chain
   end
 

@@ -30,6 +30,11 @@ defmodule AppAttest.AssertionTest do
   end
 
   describe "validate/7" do
+    test "rejects an assertion object that is not CBOR at all as an invalid assertion" do
+      assert validate(<<0xFF>>) == {:error, :invalid_assertion}
+      assert validate(<<>>) == {:error, :invalid_assertion}
+    end
+
     test "rejects an assertion object without a signature instead of crashing" do
       assertion_object = CBOR.encode(%{"authenticatorData" => bytes(@auth_data)})
 
@@ -47,11 +52,6 @@ defmodule AppAttest.AssertionTest do
     test "lists every reason validate/7 can return" do
       assert Typespecs.union_atoms(Assertion, :rejection) == [
                :environment_mismatch,
-               :cbor_function_clause_error,
-               :cbor_match_error,
-               :cbor_case_clause_error,
-               :cbor_decoder_error,
-               :cannot_decode_non_binary_values,
                :invalid_assertion,
                :invalid_authenticator_data,
                :invalid_signature,

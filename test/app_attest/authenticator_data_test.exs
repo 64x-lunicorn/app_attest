@@ -64,18 +64,6 @@ defmodule AppAttest.AuthenticatorDataTest do
     end
   end
 
-  describe "unwrap_bytes/1" do
-    test "unwraps the CBOR byte string Apple's own fields are encoded as" do
-      assert AuthenticatorData.unwrap_bytes(%CBOR.Tag{tag: :bytes, value: "raw"}) == {:ok, "raw"}
-    end
-
-    test "rejects anything that is not a CBOR byte string instead of crashing" do
-      assert AuthenticatorData.unwrap_bytes("a CBOR text string") == :error
-      assert AuthenticatorData.unwrap_bytes(nil) == :error
-      assert AuthenticatorData.unwrap_bytes(%CBOR.Tag{tag: 42, value: "tagged"}) == :error
-    end
-  end
-
   describe "environment/1" do
     test "identifies Apple's development aaguid as the development environment" do
       assert AuthenticatorData.environment("appattestdevelop") == :development

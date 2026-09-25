@@ -68,6 +68,11 @@ defmodule AppAttest.AttestationTest do
   end
 
   describe "validate/5" do
+    test "rejects an attestation object that is not CBOR at all as an invalid attestation" do
+      assert validate(<<0xFF>>) == {:error, :invalid_attestation}
+      assert validate(<<>>) == {:error, :invalid_attestation}
+    end
+
     test "rejects an attestation whose aaguid is unrecognized instead of crashing" do
       {attestation_object, leaf_der} =
         self_generated_attestation_without_attested_credential_data()
@@ -102,11 +107,6 @@ defmodule AppAttest.AttestationTest do
   describe "rejection/0" do
     test "lists every reason validate/5 can return" do
       assert Typespecs.union_atoms(Attestation, :rejection) == [
-               :cbor_function_clause_error,
-               :cbor_match_error,
-               :cbor_case_clause_error,
-               :cbor_decoder_error,
-               :cannot_decode_non_binary_values,
                :invalid_attestation,
                :untrusted_root,
                :nonce_mismatch,

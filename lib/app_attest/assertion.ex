@@ -14,7 +14,7 @@ defmodule AppAttest.Assertion do
   persist; it persists nothing on its own.
   """
 
-  alias AppAttest.AuthenticatorData
+  alias AppAttest.{AuthenticatorData, Envelope}
 
   @typedoc """
   Every reason `validate/7` rejects an Assertion. A malformed Assertion is
@@ -22,11 +22,11 @@ defmodule AppAttest.Assertion do
   this library is to distrust its own input.
 
   * `:environment_mismatch` - `expected_environment` does not match `stored_environment`.
-  * `t:AppAttest.AuthenticatorData.cbor_error/0` - `assertion_object` is not
-    well-formed CBOR at all.
-  * `:invalid_assertion` - it decodes, but is not an assertion object: a
-    missing `signature` or `authenticatorData`, or one of the two not a
-    CBOR byte string.
+  * `:invalid_assertion` - `assertion_object` is not an assertion object:
+    not well-formed CBOR at all, a missing `signature` or
+    `authenticatorData`, or one of the two not a CBOR byte string. Which
+    CBOR decoding failure it was is deliberately not told apart, so no atom
+    of the `cbor` package reaches a caller (#10).
   * `:invalid_authenticator_data` - the authenticator data is truncated
     (`AppAttest.AuthenticatorData.parse/1`).
   * `:invalid_signature` - the signature does not match `public_key` and
@@ -36,7 +36,6 @@ defmodule AppAttest.Assertion do
   """
   @type rejection ::
           :environment_mismatch
-          | AuthenticatorData.cbor_error()
           | :invalid_assertion
           | :invalid_authenticator_data
           | :invalid_signature
@@ -83,29 +82,14 @@ defmodule AppAttest.Assertion do
         expected_environment
       ) do
     with :ok <- check_environment(stored_environment, expected_environment),
-         {:ok, decoded, _rest} <- CBOR.decode(assertion_object),
-         {:ok, signature, auth_data} <- unwrap_assertion(decoded),
+         {:ok, %{signature: signature, auth_data: auth_data}} <-
+           Envelope.decode_assertion(assertion_object),
          {:ok, authenticator_data} <- AuthenticatorData.parse(auth_data),
          :ok <- check_signature(auth_data, client_data, signature, public_key),
          :ok <- AuthenticatorData.check_app_id(authenticator_data, app_id) do
       check_counter(authenticator_data, stored_counter)
     end
   end
-
-  # Both fields a genuine Assertion object carries, taken apart in one
-  # place: anything else is not an assertion object and is rejected rather
-  # than raising (#212, the shape `AppAttest.RiskMetric`'s own parsers
-  # already use for a Receipt).
-  defp unwrap_assertion(%{"signature" => signature_tag, "authenticatorData" => auth_data_tag}) do
-    with {:ok, signature} <- AuthenticatorData.unwrap_bytes(signature_tag),
-         {:ok, auth_data} <- AuthenticatorData.unwrap_bytes(auth_data_tag) do
-      {:ok, signature, auth_data}
-    else
-      :error -> {:error, :invalid_assertion}
-    end
-  end
-
-  defp unwrap_assertion(_not_an_assertion), do: {:error, :invalid_assertion}
 
   defp check_environment(stored_environment, expected_environment) do
     if stored_environment == expected_environment do
