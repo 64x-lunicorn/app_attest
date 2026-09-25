@@ -5,10 +5,10 @@ defmodule AppAttest.EnvelopeTest do
 
   defp bytes(value), do: %CBOR.Tag{tag: :bytes, value: value}
 
-  defp attestation_object(auth_data, x5c) do
+  defp attestation_object(auth_data, x5c, receipt \\ bytes("receipt")) do
     CBOR.encode(%{
       "fmt" => "apple-appattest",
-      "attStmt" => %{"x5c" => x5c},
+      "attStmt" => %{"x5c" => x5c, "receipt" => receipt},
       "authData" => auth_data
     })
   end
@@ -19,18 +19,19 @@ defmodule AppAttest.EnvelopeTest do
 
   describe "decode_attestation/1" do
     test "decodes Apple's own attestation object into its raw fields" do
-      assert {:ok, %{auth_data: auth_data, chain: [leaf | _intermediates], att_stmt: att_stmt}} =
+      assert {:ok, %{auth_data: auth_data, chain: [leaf | _intermediates], receipt: receipt}} =
                Envelope.decode_attestation(Fixtures.attestation())
 
       assert is_binary(auth_data)
       assert {:ok, _certificate} = X509.Certificate.from_der(leaf)
-      # Kept whole for fields read elsewhere, such as the receipt (#11).
-      assert Map.has_key?(att_stmt, "receipt")
+      # Apple's receipt is a PKCS#7/CMS ContentInfo (#11).
+      assert {:ContentInfo, _signed_data_oid, _content} =
+               :public_key.der_decode(:ContentInfo, receipt)
     end
 
     test "unwraps the CBOR byte strings Apple's own fields are encoded as" do
       assert Envelope.decode_attestation(attestation_object(bytes("raw"), [bytes("der")])) ==
-               {:ok, %{auth_data: "raw", chain: ["der"], att_stmt: %{"x5c" => [bytes("der")]}}}
+               {:ok, %{auth_data: "raw", chain: ["der"], receipt: "receipt"}}
     end
 
     test "rejects fields that are not CBOR byte strings instead of crashing" do
@@ -43,6 +44,15 @@ defmodule AppAttest.EnvelopeTest do
             {bytes("raw"), nil}
           ] do
         assert Envelope.decode_attestation(attestation_object(auth_data, x5c)) ==
+                 {:error, :invalid_attestation}
+      end
+    end
+
+    test "rejects a missing receipt, or one that is not a CBOR byte string" do
+      for receipt <- [nil, "a CBOR text string", %CBOR.Tag{tag: 42, value: "tagged"}] do
+        assert Envelope.decode_attestation(
+                 attestation_object(bytes("raw"), [bytes("der")], receipt)
+               ) ==
                  {:error, :invalid_attestation}
       end
     end

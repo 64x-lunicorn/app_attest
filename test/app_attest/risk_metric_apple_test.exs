@@ -24,8 +24,8 @@ defmodule AppAttest.RiskMetricAppleTest do
   ## What this does not prove
 
   No `200`, and therefore no real receipt. The receipt sent here is the one
-  embedded in the `uebelack/node-app-attest` fixture Attestation
-  (`AppAttest.Fixtures.attestation_receipt/0`): a real, Apple-issued
+  embedded in the `uebelack/node-app-attest` fixture Attestation (the
+  `receipt` of the `AppAttest.Device` its validation returns): a real, Apple-issued
   receipt, but issued to a foreign team and long expired, so Apple answers
   it with `400`. A `200` needs a receipt from a device running Corridor's
   own app under this Team ID, which does not exist until Corridor ships to
@@ -42,7 +42,7 @@ defmodule AppAttest.RiskMetricAppleTest do
 
   use ExUnit.Case, async: true
 
-  alias AppAttest.{AppleCredentials, Fixtures, RiskMetric, RootCertificate}
+  alias AppAttest.{AppleCredentials, Attestation, Device, Fixtures, RiskMetric, RootCertificate}
 
   @moduletag :apple_endpoint
   # A real round trip to Apple, over the real network.
@@ -75,8 +75,17 @@ defmodule AppAttest.RiskMetricAppleTest do
   # No `opts[:transport]`: the real `:httpc` call is half of what is under
   # test here.
   defp fetch(device_check_key) do
+    {:ok, %Device{receipt: receipt}} =
+      Attestation.validate(
+        Fixtures.attestation(),
+        Fixtures.key_id(),
+        Fixtures.challenge(),
+        Fixtures.app_id(),
+        RootCertificate.default()
+      )
+
     RiskMetric.fetch(
-      Fixtures.attestation_receipt(),
+      receipt,
       :development,
       device_check_key,
       RootCertificate.apple_root_ca_g3()

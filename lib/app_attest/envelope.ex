@@ -12,13 +12,13 @@ defmodule AppAttest.Envelope do
 
   @typedoc """
   A decoded `apple-appattest` Attestation object: its raw `authData`, its
-  leaf-first `x5c` certificate chain (DER), and the whole `attStmt` map as
-  decoded, for fields read elsewhere (such as `receipt`, #11).
+  leaf-first `x5c` certificate chain (DER), and the raw receipt it carries
+  in `attStmt.receipt` (#11).
   """
   @type attestation :: %{
           auth_data: binary(),
           chain: [AppAttest.RootCertificate.der(), ...],
-          att_stmt: map()
+          receipt: binary()
         }
 
   @typedoc "A decoded Assertion object: its raw `signature` and `authenticatorData`."
@@ -67,8 +67,9 @@ defmodule AppAttest.Envelope do
        })
        when is_map(att_stmt) do
     with {:ok, auth_data} <- unwrap_bytes(auth_data_tag),
-         {:ok, chain} <- unwrap_chain(Map.get(att_stmt, "x5c")) do
-      {:ok, %{auth_data: auth_data, chain: chain, att_stmt: att_stmt}}
+         {:ok, chain} <- unwrap_chain(Map.get(att_stmt, "x5c")),
+         {:ok, receipt} <- unwrap_bytes(Map.get(att_stmt, "receipt")) do
+      {:ok, %{auth_data: auth_data, chain: chain, receipt: receipt}}
     end
   end
 
@@ -98,8 +99,8 @@ defmodule AppAttest.Envelope do
   defp unwrap_chain(_not_a_certificate_chain), do: :error
 
   # The `cbor` package wraps every decoded CBOR byte string (the format
-  # Apple uses for authData, each x5c certificate, an Assertion's own
-  # signature and authenticatorData) in a `%CBOR.Tag{tag: :bytes, value:
+  # Apple uses for authData, each x5c certificate, the receipt, an
+  # Assertion's own signature and authenticatorData) in a `%CBOR.Tag{tag: :bytes, value:
   # binary}` rather than handing back the raw binary (its own README
   # explains why). Anything else — a CBOR text string, a number, a missing
   # key's `nil` — is `:error` rather than a crash (#212): a caller's own

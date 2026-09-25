@@ -204,21 +204,6 @@ defmodule AppAttest.Fixtures do
   end
 
   @doc """
-  The receipt embedded in the fixture Attestation's own `attStmt.receipt`:
-  a real, Apple-issued receipt, but one issued to `uebelack/node-app-attest`'s
-  own team and long expired, so Apple answers a risk-metric request carrying
-  it with an error rather than a new receipt
-  (`AppAttest.RiskMetricAppleTest`).
-  """
-  @spec attestation_receipt() :: binary()
-  def attestation_receipt do
-    {:ok, %{"attStmt" => %{"receipt" => %CBOR.Tag{tag: :bytes, value: receipt}}}, _rest} =
-      CBOR.decode(attestation())
-
-    receipt
-  end
-
-  @doc """
   A self-signed CMS/PKCS#7 receipt (#171) carrying `risk_metric` in Apple's
   own field 17, and validity dates in its fields 19 and 21
   (`AppAttest.RiskMetric`'s own moduledoc), signed by `chain.leaf_key` over

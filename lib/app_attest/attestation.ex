@@ -6,19 +6,12 @@ defmodule AppAttest.Attestation do
   expected app.
 
   `app_attest` holds no device state itself (CLAUDE.md, Corridor ADR
-  0006, #174): `validate/5` returns the device's public key, start Counter
-  and App Attest environment for the caller to persist; it persists
-  nothing on its own.
+  0006, #174): `validate/5` returns an `AppAttest.Device` with the
+  device's public key, start Counter, App Attest environment and receipt
+  for the caller to persist; it persists nothing on its own.
   """
 
-  alias AppAttest.{AuthenticatorData, Envelope, RootCertificate}
-
-  @typedoc "The result of a successful Attestation: what the caller now persists."
-  @type attested :: %{
-          public_key: :public_key.public_key(),
-          counter: non_neg_integer(),
-          environment: AuthenticatorData.environment()
-        }
+  alias AppAttest.{AuthenticatorData, Device, Envelope, RootCertificate}
 
   @typedoc """
   Every reason `validate/5` rejects an Attestation. A malformed Attestation
@@ -29,7 +22,8 @@ defmodule AppAttest.Attestation do
     `apple-appattest` attestation object: not well-formed CBOR at all, a
     different `fmt`, a missing `attStmt` or `authData`, an `authData` that
     is not a CBOR byte string, an empty or missing `x5c` certificate chain,
-    or junk in place of a certificate. Which CBOR decoding failure it was
+    junk in place of a certificate, or a missing `receipt` or one that is
+    not a CBOR byte string (#11). Which CBOR decoding failure it was
     is deliberately not told apart, so no atom of the `cbor` package
     reaches a caller (#10).
   * `:untrusted_root` - the certificate chain does not lead to `root`.
@@ -65,15 +59,17 @@ defmodule AppAttest.Attestation do
   is part of this seam's agreed shape (architecture #174) but not itself
   checked by ticket #168's scope.
 
-  Returns `{:ok, attested}` with the device's public key, start Counter and
-  App Attest environment (`:development` or `:production`, read from the
-  attestation's own `aaguid`, #170) for the caller to persist, or
+  Returns `{:ok, device}`, an `AppAttest.Device` with the device's public
+  key, start Counter, App Attest environment (`:development` or
+  `:production`, read from the attestation's own `aaguid`, #170) and the
+  receipt the Attestation carried in `attStmt.receipt` (the one the first
+  `AppAttest.RiskMetric.fetch/5` sends, #11) for the caller to persist, or
   `{:error, rejection}`.
   """
   @spec validate(binary(), String.t(), binary(), String.t(), RootCertificate.der()) ::
-          {:ok, attested()} | {:error, rejection()}
+          {:ok, Device.t()} | {:error, rejection()}
   def validate(attestation_object, _key_id, challenge, app_id, root) do
-    with {:ok, %{auth_data: auth_data, chain: chain}} <-
+    with {:ok, %{auth_data: auth_data, chain: chain, receipt: receipt}} <-
            Envelope.decode_attestation(attestation_object),
          {:ok, leaf} <- leaf_certificate(chain),
          :ok <- check_trusted_chain(root, chain),
@@ -82,10 +78,11 @@ defmodule AppAttest.Attestation do
          :ok <- AuthenticatorData.check_app_id(authenticator_data, app_id),
          {:ok, environment} <- check_environment(authenticator_data.aaguid) do
       {:ok,
-       %{
+       %Device{
          public_key: X509.Certificate.public_key(leaf),
          counter: authenticator_data.counter,
-         environment: environment
+         environment: environment,
+         receipt: receipt
        }}
     end
   end

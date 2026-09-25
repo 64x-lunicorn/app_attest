@@ -9,19 +9,20 @@ defmodule AppAttest.Assertion do
   one the device was attested in (#170).
 
   `app_attest` holds no device state itself (CLAUDE.md, Corridor ADR 0006,
-  #174): `validate/7` takes the caller's stored public key, Counter and
-  environment as input and returns the new Counter for the caller to
-  persist; it persists nothing on its own.
+  #174): `validate/5` takes the caller's stored `AppAttest.Device` as input
+  and returns it with the Counter moved on, for the caller to persist; it
+  persists nothing on its own.
   """
 
-  alias AppAttest.{AuthenticatorData, Envelope}
+  alias AppAttest.{AuthenticatorData, Device, Envelope}
 
   @typedoc """
-  Every reason `validate/7` rejects an Assertion. A malformed Assertion is
+  Every reason `validate/5` rejects an Assertion. A malformed Assertion is
   rejected with one of these, never by raising (#212): the whole point of
   this library is to distrust its own input.
 
-  * `:environment_mismatch` - `expected_environment` does not match `stored_environment`.
+  * `:environment_mismatch` - `expected_environment` does not match the
+    Device's `environment`.
   * `:invalid_assertion` - `assertion_object` is not an assertion object:
     not well-formed CBOR at all, a missing `signature` or
     `authenticatorData`, or one of the two not a CBOR byte string. Which
@@ -29,10 +30,11 @@ defmodule AppAttest.Assertion do
     of the `cbor` package reaches a caller (#10).
   * `:invalid_authenticator_data` - the authenticator data is truncated
     (`AppAttest.AuthenticatorData.parse/1`).
-  * `:invalid_signature` - the signature does not match `public_key` and
-    `client_data`.
+  * `:invalid_signature` - the signature does not match the Device's
+    `public_key` and `client_data`.
   * `:app_id_mismatch` - the App ID hash does not match `app_id`.
-  * `:counter_not_increasing` - the Counter is not strictly greater than `stored_counter`.
+  * `:counter_not_increasing` - the Counter is not strictly greater than
+    the Device's `counter`.
   """
   @type rejection ::
           :environment_mismatch
@@ -46,9 +48,10 @@ defmodule AppAttest.Assertion do
   Validates `assertion_object` — the raw, CBOR-encoded assertion Apple's SDK
   produces — against `client_data` (the request-specific data the caller
   asked the device to sign, typically embedding a fresh server challenge),
-  `app_id` (`"<Team ID>.<bundle ID>"`) and the device's already-attested
-  `public_key`, `stored_counter` and `stored_environment` (ticket #168's
-  result, persisted by the caller).
+  `app_id` (`"<Team ID>.<bundle ID>"`) and `device`, the caller's stored
+  `AppAttest.Device` (what `AppAttest.Attestation.validate/5` returned, or
+  the previous Assertion moved on): its `public_key`, `counter` and
+  `environment`.
 
   Apple's own on-device API signs every Assertion over `authenticatorData`
   concatenated with the SHA-256 hash of `client_data`, never
@@ -57,37 +60,35 @@ defmodule AppAttest.Assertion do
 
   An Assertion carries no environment bytes of its own, so `expected_environment`
   is the environment the caller expects for this request (#170); it is
-  compared against `stored_environment`, never read off the assertion
-  itself.
+  compared against the Device's `environment`, never read off the
+  assertion itself.
 
-  Returns `{:ok, new_counter}` with the assertion's own Counter, for the
-  caller to persist in place of `stored_counter`, or `{:error, rejection}`.
+  Returns `{:ok, device}`, the same `AppAttest.Device` with only its
+  `counter` moved on to the assertion's own Counter, for the caller to
+  persist in place of the one it passed, or `{:error, rejection}`.
   """
   @spec validate(
           binary(),
           binary(),
           String.t(),
-          :public_key.public_key(),
-          non_neg_integer(),
-          AuthenticatorData.environment(),
+          Device.t(),
           AuthenticatorData.environment()
-        ) :: {:ok, non_neg_integer()} | {:error, rejection()}
+        ) :: {:ok, Device.t()} | {:error, rejection()}
   def validate(
         assertion_object,
         client_data,
         app_id,
-        public_key,
-        stored_counter,
-        stored_environment,
+        %Device{public_key: public_key, counter: stored_counter} = device,
         expected_environment
       ) do
-    with :ok <- check_environment(stored_environment, expected_environment),
+    with :ok <- check_environment(device.environment, expected_environment),
          {:ok, %{signature: signature, auth_data: auth_data}} <-
            Envelope.decode_assertion(assertion_object),
          {:ok, authenticator_data} <- AuthenticatorData.parse(auth_data),
          :ok <- check_signature(auth_data, client_data, signature, public_key),
-         :ok <- AuthenticatorData.check_app_id(authenticator_data, app_id) do
-      check_counter(authenticator_data, stored_counter)
+         :ok <- AuthenticatorData.check_app_id(authenticator_data, app_id),
+         {:ok, counter} <- check_counter(authenticator_data, stored_counter) do
+      {:ok, %Device{device | counter: counter}}
     end
   end
 
