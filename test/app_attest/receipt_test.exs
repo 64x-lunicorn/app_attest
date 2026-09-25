@@ -1,14 +1,7 @@
 defmodule AppAttest.ReceiptTest do
   use ExUnit.Case, async: true
 
-  alias AppAttest.{Envelope, Fixtures, Receipt, RootCertificate}
-
-  # The real, Apple-issued Receipt the fixture Attestation carries in its own
-  # `attStmt.receipt`.
-  defp apple_receipt do
-    {:ok, %{receipt: receipt}} = Envelope.decode_attestation(Fixtures.attestation())
-    receipt
-  end
+  alias AppAttest.{Fixtures, Receipt, RootCertificate}
 
   describe "verify/2 with the real Apple Receipt inside the fixture Attestation" do
     test "verifies against Apple Root CA - G3 and reads as an ATTEST Receipt without a risk metric" do
@@ -19,17 +12,18 @@ defmodule AppAttest.ReceiptTest do
                 risk_metric: nil,
                 not_before: nil,
                 expiration_time: ~U[2024-05-04 20:27:06.193Z]
-              }} = Receipt.verify(apple_receipt(), RootCertificate.apple_root_ca_g3())
+              }} =
+               Receipt.verify(Fixtures.attestation_receipt(), RootCertificate.apple_root_ca_g3())
     end
 
     test "does not verify against the App Attest root an Attestation's own chain uses" do
       assert {:error, :untrusted_receipt} =
-               Receipt.verify(apple_receipt(), RootCertificate.default())
+               Receipt.verify(Fixtures.attestation_receipt(), RootCertificate.default())
     end
 
     # Every prefix of a real Receipt: undecodable at every length, never a raise.
     test "rejects every truncation of it as invalid, never raising" do
-      receipt = apple_receipt()
+      receipt = Fixtures.attestation_receipt()
 
       for length <- 0..(byte_size(receipt) - 1) do
         assert {:error, :invalid_receipt} =
@@ -46,15 +40,12 @@ defmodule AppAttest.ReceiptTest do
     # signed data, a version number) and still verify, so the outcome is any
     # of the documented ones.
     test "answers it with any single byte flipped, never raising" do
-      receipt = apple_receipt()
+      receipt = Fixtures.attestation_receipt()
       root = RootCertificate.apple_root_ca_g3()
       genuine = Receipt.verify(receipt, root)
 
       for position <- 0..(byte_size(receipt) - 1) do
-        <<before::binary-size(^position), byte, rest::binary>> = receipt
-        flipped = before <> <<Bitwise.bxor(byte, 0xFF)>> <> rest
-
-        assert Receipt.verify(flipped, root) in [
+        assert Receipt.verify(Fixtures.flip_byte(receipt, position), root) in [
                  {:error, :untrusted_receipt},
                  {:error, :invalid_receipt},
                  genuine
@@ -90,8 +81,7 @@ defmodule AppAttest.ReceiptTest do
       # Flipped, not overwritten with a fixed byte: the chain is generated
       # afresh every run, so a fixed byte would silently equal the original
       # about one run in 256 and leave the Receipt genuine.
-      flipped_last_byte = Bitwise.bxor(:binary.last(receipt), 0xFF)
-      tampered = binary_part(receipt, 0, byte_size(receipt) - 1) <> <<flipped_last_byte>>
+      tampered = Fixtures.flip_byte(receipt, byte_size(receipt) - 1)
 
       assert {:error, :untrusted_receipt} = Receipt.verify(tampered, chain.root)
     end

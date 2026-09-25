@@ -3,21 +3,6 @@ defmodule AppAttest.AttestationTest do
 
   alias AppAttest.{Attestation, Device, Fixtures, RootCertificate, Typespecs}
 
-  # Apple's own nonce extension OID (`Attestation`'s own
-  # `@nonce_extension_oid`): a DER SEQUENCE containing one element, a
-  # context-tag [1] wrapping an OCTET STRING of the 32-byte nonce.
-  # `check_nonce/3` only skips this fixed-size wrapper, never re-validates
-  # its own DER structure, so any 6 bytes stand in for it here.
-  @nonce_extension_oid {1, 2, 840, 113_635, 100, 8, 2}
-  @nonce_extension_wrapper <<0, 0, 0, 0, 0, 0>>
-
-  @app_id "TEAMID12345.de.lunicorn.corridor"
-  @challenge "server-challenge"
-
-  # A well-formed 37-byte authenticator data prefix, so a test that targets
-  # one malformed field of an Attestation never trips over this one.
-  @auth_data <<:crypto.hash(:sha256, @app_id)::binary, 0, 0::32-big>>
-
   # The real fixture's own key identifier, as Apple's SDK returned it and
   # the fixture file recorded it (`keyId`), written out here so the expected
   # value comes from the fixture's data rather than from the code under test.
@@ -31,101 +16,25 @@ defmodule AppAttest.AttestationTest do
   # the expected value does not come from the code under test.
   @fixture_receipt_sha256 "4e52998201baa1a9c2572f8560d5737bca64dbf62e7a240abddb08bf967df2ec"
 
-  # Every rejection below happens before the chain is checked against a root,
-  # so which root is passed cannot change the outcome.
-  @any_root <<>>
-
-  # A well-formed `apple-appattest` envelope whose `attStmt` and `authData`
-  # are exactly what the caller passes, so one malformed field at a time can
-  # be put in an otherwise intact Attestation.
-  defp attestation_object(att_stmt, auth_data) do
-    CBOR.encode(%{
-      "fmt" => "apple-appattest",
-      "attStmt" => att_stmt,
-      "authData" => auth_data
-    })
-  end
-
-  defp bytes(value), do: %CBOR.Tag{tag: :bytes, value: value}
-
-  # Replaces one randomly chosen byte of `der` with a random value, threading
-  # the explicit `:rand` state so the caller's mutations stay deterministic.
-  defp mutate_byte(der, state) do
-    {position, state} = :rand.uniform_s(byte_size(der), state)
-    {value, state} = :rand.uniform_s(256, state)
-    offset = position - 1
-    <<before::binary-size(^offset), _byte, rest::binary>> = der
-    {<<before::binary, value - 1, rest::binary>>, state}
-  end
-
-  defp validate(attestation_object) do
+  # Validates a self-generated Attestation (`Fixtures.self_generated_attestation/1`)
+  # for exactly what it was built for, expecting `environment`.
+  defp validate_self_generated(attestation, environment \\ :development) do
     Attestation.validate(
-      attestation_object,
-      "key-id",
-      @challenge,
-      @app_id,
-      @any_root,
-      :development
+      attestation.attestation,
+      attestation.key_id,
+      attestation.challenge,
+      attestation.app_id,
+      attestation.root,
+      environment
     )
   end
 
-  # A self-signed, entirely self-generated attestation object (no real
-  # device involved), returned as `{attestation_object, key_id, leaf_der}`:
-  # `key_id` is the base64 SHA-256 of the leaf's own public key in X9.62
-  # uncompressed point format, exactly as Apple's SDK derives it, and
-  # `leaf_der` doubles as the trusted root (as `AppAttest.RootCertificate`'s
-  # own tests do with a fresh self-signed certificate), so only what a test
-  # deliberately varies can make it fail.
-  #
-  # By default its authenticator data is consistent with `key_id`: Counter
-  # 0, Apple's development aaguid and a credentialId equal to the key
-  # identifier. Options vary one field at a time:
-  #
-  # * `:counter` - the authenticator data's Counter (default 0).
-  # * `:aaguid` - the aaguid (default: Apple's development value).
-  # * `:credential_id` - the credentialId (default: the key identifier).
-  # * `:attested_credential_data` - `false` for only the 37-byte prefix,
-  #   so `AuthenticatorData.parse/1` comes back with `aaguid: nil` — a
-  #   structurally valid but malformed Attestation no genuine device would
-  #   ever produce. Apple's real fixture cannot stand in for these: its
-  #   authData is signed over by the nonce, so altering it breaks the nonce
-  #   check first and never reaches the check a test targets.
-  # * `:att_stmt` - the `attStmt` fields besides `x5c` (default: a receipt).
-  defp self_generated_attestation(opts \\ []) do
-    private_key = X509.PrivateKey.new_ec(:secp256r1)
-    {{:ECPoint, public_key_point}, _parameters} = X509.PublicKey.derive(private_key)
-    key_id_bytes = :crypto.hash(:sha256, public_key_point)
-
-    prefix = <<:crypto.hash(:sha256, @app_id)::binary, 0, Keyword.get(opts, :counter, 0)::32-big>>
-    credential_id = Keyword.get(opts, :credential_id, key_id_bytes)
-
-    auth_data =
-      if Keyword.get(opts, :attested_credential_data, true) do
-        prefix <>
-          Keyword.get(opts, :aaguid, "appattestdevelop") <>
-          <<byte_size(credential_id)::16>> <> credential_id
-      else
-        prefix
-      end
-
-    expected_nonce = :crypto.hash(:sha256, auth_data <> :crypto.hash(:sha256, @challenge))
-
-    nonce_extension =
-      {:Extension, @nonce_extension_oid, false, @nonce_extension_wrapper <> expected_nonce}
-
-    leaf_der =
-      private_key
-      |> X509.Certificate.self_signed("/CN=Test Device",
-        extensions: [apple_nonce: nonce_extension]
-      )
-      |> X509.Certificate.to_der()
-
-    att_stmt =
-      opts
-      |> Keyword.get(:att_stmt, %{"receipt" => bytes("a-receipt")})
-      |> Map.put("x5c", [bytes(leaf_der)])
-
-    {attestation_object(att_stmt, bytes(auth_data)), Base.encode64(key_id_bytes), leaf_der}
+  # Validates raw bytes that are not a well-formed Attestation object at
+  # all. Decoding fails before any key, challenge or root is looked at, so
+  # which ones are passed cannot change the outcome.
+  defp validate_bytes(attestation_object) do
+    attestation = Fixtures.self_generated_attestation()
+    validate_self_generated(%{attestation | attestation: attestation_object})
   end
 
   defp validate_fixture(key_id) do
@@ -173,8 +82,7 @@ defmodule AppAttest.AttestationTest do
       {{:ECPoint, <<0x04, _x_and_y::binary-size(64)>> = point}, _parameters} =
         leaf_der |> X509.Certificate.from_der!() |> X509.Certificate.public_key()
 
-      {:ok, %{auth_data: auth_data}} =
-        AppAttest.Envelope.decode_attestation(Fixtures.attestation())
+      auth_data = Fixtures.attestation_authenticator_data()
 
       <<_app_id_hash::binary-size(32), _flags, counter::32-big, _aaguid::binary-size(16),
         credential_id_length::16-big, credential_id::binary-size(credential_id_length),
@@ -208,170 +116,129 @@ defmodule AppAttest.AttestationTest do
     end
 
     test "rejects a self-generated Attestation whose credentialId differs from the key_id" do
-      {attestation_object, key_id, leaf_der} =
-        self_generated_attestation(credential_id: :crypto.hash(:sha256, "another credential"))
+      attestation =
+        Fixtures.self_generated_attestation(
+          credential_id: :crypto.hash(:sha256, "another credential")
+        )
 
-      assert Attestation.validate(
-               attestation_object,
-               key_id,
-               @challenge,
-               @app_id,
-               leaf_der,
-               :development
-             ) ==
-               {:error, :key_id_mismatch}
+      assert validate_self_generated(attestation) == {:error, :key_id_mismatch}
     end
 
     test "rejects a self-generated Attestation whose Counter is not 0" do
-      {attestation_object, key_id, leaf_der} = self_generated_attestation(counter: 1)
+      attestation = Fixtures.self_generated_attestation(counter: 1)
 
-      assert Attestation.validate(
-               attestation_object,
-               key_id,
-               @challenge,
-               @app_id,
-               leaf_der,
-               :development
-             ) ==
-               {:error, :counter_not_zero}
+      assert validate_self_generated(attestation) == {:error, :counter_not_zero}
     end
 
     test "checks the App ID before the Counter, in Apple's order" do
-      {attestation_object, key_id, leaf_der} = self_generated_attestation(counter: 1)
+      attestation = Fixtures.self_generated_attestation(counter: 1)
 
-      assert Attestation.validate(
-               attestation_object,
-               key_id,
-               @challenge,
-               "OTHER.app",
-               leaf_der,
-               :development
-             ) ==
+      assert validate_self_generated(%{attestation | app_id: "OTHER.app"}) ==
                {:error, :app_id_mismatch}
     end
 
     test "returns the self-generated receipt with the Device it attests" do
-      {attestation_object, key_id, leaf_der} = self_generated_attestation()
+      attestation = Fixtures.self_generated_attestation()
 
       assert {:ok, %Device{receipt: "a-receipt", counter: 0, environment: :development}} =
-               Attestation.validate(
-                 attestation_object,
-                 key_id,
-                 @challenge,
-                 @app_id,
-                 leaf_der,
-                 :development
-               )
+               validate_self_generated(attestation)
     end
 
     test "rejects an otherwise genuine attestation whose attStmt carries no receipt" do
-      {attestation_object, key_id, leaf_der} = self_generated_attestation(att_stmt: %{})
+      attestation = Fixtures.self_generated_attestation(receipt: :omit)
 
-      assert Attestation.validate(
-               attestation_object,
-               key_id,
-               @challenge,
-               @app_id,
-               leaf_der,
-               :development
-             ) ==
-               {:error, :invalid_attestation}
+      assert validate_self_generated(attestation) == {:error, :invalid_attestation}
     end
 
     test "rejects an attestation whose receipt is not a CBOR byte string" do
-      {attestation_object, key_id, leaf_der} =
-        self_generated_attestation(att_stmt: %{"receipt" => "a CBOR text string"})
+      for receipt <- ["a CBOR text string", nil, %CBOR.Tag{tag: 42, value: "tagged"}] do
+        attestation = Fixtures.self_generated_attestation(receipt: receipt)
 
-      assert Attestation.validate(
-               attestation_object,
-               key_id,
-               @challenge,
-               @app_id,
-               leaf_der,
-               :development
-             ) ==
-               {:error, :invalid_attestation}
+        assert validate_self_generated(attestation) == {:error, :invalid_attestation}
+      end
     end
 
     test "rejects an attestation object that is not CBOR at all as an invalid attestation" do
-      assert validate(<<0xFF>>) == {:error, :invalid_attestation}
-      assert validate(<<>>) == {:error, :invalid_attestation}
+      # The last one declares a byte string longer than what follows.
+      for input <- [<<0xFF>>, <<>>, <<0x5A, 0, 0, 0, 9>>] do
+        assert validate_bytes(input) == {:error, :invalid_attestation}
+      end
+    end
+
+    test "rejects an attestation object that is not even bytes without naming a cbor error" do
+      assert validate_bytes(:not_a_binary) == {:error, :invalid_attestation}
     end
 
     test "rejects an attestation whose aaguid is unrecognized instead of crashing" do
-      {attestation_object, key_id, leaf_der} =
-        self_generated_attestation(attested_credential_data: false)
+      attestation = Fixtures.self_generated_attestation(attested_credential_data: false)
 
-      assert Attestation.validate(
-               attestation_object,
-               key_id,
-               @challenge,
-               @app_id,
-               leaf_der,
-               :development
-             ) ==
-               {:error, :unrecognized_environment}
+      assert validate_self_generated(attestation) == {:error, :unrecognized_environment}
     end
 
     test "rejects a production Attestation where a development one is expected" do
       # Apple's production aaguid: "appattest" padded with seven 0x00 bytes.
-      {attestation_object, key_id, leaf_der} =
-        self_generated_attestation(aaguid: "appattest" <> <<0::56>>)
+      attestation = Fixtures.self_generated_attestation(aaguid: "appattest" <> <<0::56>>)
 
-      assert Attestation.validate(
-               attestation_object,
-               key_id,
-               @challenge,
-               @app_id,
-               leaf_der,
-               :development
-             ) == {:error, :environment_mismatch}
+      assert validate_self_generated(attestation, :development) ==
+               {:error, :environment_mismatch}
     end
 
     test "accepts a production Attestation where a production one is expected" do
-      {attestation_object, key_id, leaf_der} =
-        self_generated_attestation(aaguid: "appattest" <> <<0::56>>)
+      attestation = Fixtures.self_generated_attestation(aaguid: "appattest" <> <<0::56>>)
 
       assert {:ok, %Device{environment: :production}} =
-               Attestation.validate(
-                 attestation_object,
-                 key_id,
-                 @challenge,
-                 @app_id,
-                 leaf_der,
-                 :production
-               )
+               validate_self_generated(attestation, :production)
     end
 
     test "rejects a CBOR object that is not an apple-appattest attestation instead of crashing" do
-      assert validate(CBOR.encode(%{"fmt" => "not-apple"})) == {:error, :invalid_attestation}
-
-      assert validate(attestation_object("not a statement", bytes(@auth_data))) ==
+      assert validate_self_generated(Fixtures.self_generated_attestation(fmt: "not-apple")) ==
                {:error, :invalid_attestation}
+
+      assert validate_self_generated(
+               Fixtures.self_generated_attestation(att_stmt: "not a statement")
+             ) == {:error, :invalid_attestation}
     end
 
-    test "rejects an attestation with an empty certificate chain instead of crashing" do
-      assert validate(attestation_object(%{"x5c" => []}, bytes(@auth_data))) ==
-               {:error, :invalid_attestation}
+    test "rejects an attestation with an empty or missing certificate chain instead of crashing" do
+      for x5c <- [[], nil, :omit] do
+        attestation = Fixtures.self_generated_attestation(x5c: x5c)
+
+        assert validate_self_generated(attestation) == {:error, :invalid_attestation}
+      end
+    end
+
+    test "rejects an attestation whose certificate chain holds something other than CBOR byte strings" do
+      [leaf_der | _intermediates] = Fixtures.certificate_chain()
+
+      for x5c <- [
+            ["a CBOR text string"],
+            [Fixtures.cbor_bytes(leaf_der), "a CBOR text string"]
+          ] do
+        attestation = Fixtures.self_generated_attestation(x5c: x5c)
+
+        assert validate_self_generated(attestation) == {:error, :invalid_attestation}
+      end
     end
 
     test "rejects an attestation whose authData is not a CBOR byte string instead of crashing" do
-      assert validate(attestation_object(%{"x5c" => [bytes(<<1, 2, 3>>)]}, "not-bytes")) ==
-               {:error, :invalid_attestation}
+      for auth_data <- ["not-bytes", nil, %CBOR.Tag{tag: 42, value: "tagged"}, :omit] do
+        attestation = Fixtures.self_generated_attestation(auth_data: auth_data)
+
+        assert validate_self_generated(attestation) == {:error, :invalid_attestation}
+      end
     end
 
     test "rejects an attestation with junk in place of a certificate instead of crashing" do
-      assert validate(attestation_object(%{"x5c" => [bytes(<<1, 2, 3>>)]}, bytes(@auth_data))) ==
-               {:error, :invalid_attestation}
+      attestation = Fixtures.self_generated_attestation(x5c: [Fixtures.cbor_bytes(<<1, 2, 3>>)])
+
+      assert validate_self_generated(attestation) == {:error, :invalid_attestation}
     end
 
     test "rejects Apple's real fixture with junk in place of its intermediate instead of crashing" do
       [leaf_der | _intermediates] = Fixtures.certificate_chain()
-      {:ok, decoded, ""} = CBOR.decode(Fixtures.attestation())
-      junk_chain = put_in(decoded, ["attStmt", "x5c"], [bytes(leaf_der), bytes(<<1, 2, 3>>)])
 
       assert Attestation.validate(
-               CBOR.encode(junk_chain),
+               Fixtures.attestation_with_chain([leaf_der, <<1, 2, 3>>]),
                Fixtures.key_id(),
                Fixtures.challenge(),
                Fixtures.app_id(),
@@ -382,20 +249,20 @@ defmodule AppAttest.AttestationTest do
 
     # OTP's certificate decoding and path validation raise or exit in many
     # different ways for DER that is damaged deep inside, not only for
-    # junk. A fixed seed keeps the mutations, and so the test, deterministic.
+    # junk. A fixed seed keeps the positions, and so the test, deterministic.
     test "rejects Apple's real fixture with any single byte of a certificate changed instead of crashing" do
-      {:ok, decoded, ""} = CBOR.decode(Fixtures.attestation())
       chain = Fixtures.certificate_chain()
       state = :rand.seed_s(:exsss, {16, 16, 16})
 
       Enum.reduce(0..(length(chain) - 1), state, fn index, state ->
         Enum.reduce(1..200, state, fn _mutation, state ->
-          {mutated, state} = mutate_byte(Enum.at(chain, index), state)
-          x5c = chain |> List.replace_at(index, mutated) |> Enum.map(&bytes/1)
+          der = Enum.at(chain, index)
+          {position, state} = :rand.uniform_s(byte_size(der), state)
+          mutated_chain = List.replace_at(chain, index, Fixtures.flip_byte(der, position - 1))
 
           result =
             Attestation.validate(
-              CBOR.encode(put_in(decoded, ["attStmt", "x5c"], x5c)),
+              Fixtures.attestation_with_chain(mutated_chain),
               Fixtures.key_id(),
               Fixtures.challenge(),
               Fixtures.app_id(),
@@ -403,7 +270,9 @@ defmodule AppAttest.AttestationTest do
               :development
             )
 
-          assert match?({:ok, %Device{}}, result) or match?({:error, _rejection}, result)
+          # A changed certificate is never trusted, whether it still
+          # decodes or not.
+          assert result in [{:error, :invalid_attestation}, {:error, :untrusted_root}]
           state
         end)
       end)

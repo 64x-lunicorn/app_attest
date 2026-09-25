@@ -5,14 +5,6 @@ defmodule AppAttest.AssertionTest do
 
   @app_id "TEAMID12345.de.lunicorn.corridor"
 
-  # A well-formed 37-byte authenticator data prefix and a signature-shaped
-  # value, so a test that targets one missing key of an Assertion never
-  # trips over the other one.
-  @auth_data <<:crypto.hash(:sha256, @app_id)::binary, 0, 1::32-big>>
-  @signature <<0::256>>
-
-  defp bytes(value), do: %CBOR.Tag{tag: :bytes, value: value}
-
   # Every rejection below happens before the signature is checked, so which
   # key the Assertion is validated against cannot change the outcome.
   defp validate(assertion_object) do
@@ -25,6 +17,13 @@ defmodule AppAttest.AssertionTest do
       device(public_key, 0),
       :development
     )
+  end
+
+  # An otherwise genuine Assertion with one envelope field made wrong by
+  # `opts` (`Fixtures.assertion/5`).
+  defp self_generated_assertion(opts) do
+    {private_key, _public_key} = Fixtures.device_key_pair()
+    Fixtures.assertion(1, @app_id, Fixtures.client_data(), private_key, opts)
   end
 
   defp device(public_key, counter) do
@@ -68,20 +67,37 @@ defmodule AppAttest.AssertionTest do
     end
 
     test "rejects an assertion object that is not CBOR at all as an invalid assertion" do
-      assert validate(<<0xFF>>) == {:error, :invalid_assertion}
-      assert validate(<<>>) == {:error, :invalid_assertion}
+      # The last one declares a byte string longer than what follows.
+      for input <- [<<0xFF>>, <<>>, <<0x5A, 0, 0, 0, 9>>] do
+        assert validate(input) == {:error, :invalid_assertion}
+      end
+    end
+
+    test "rejects an assertion object that is not even bytes without naming a cbor error" do
+      assert validate(:not_a_binary) == {:error, :invalid_assertion}
     end
 
     test "rejects an assertion object without a signature instead of crashing" do
-      assertion_object = CBOR.encode(%{"authenticatorData" => bytes(@auth_data)})
-
-      assert validate(assertion_object) == {:error, :invalid_assertion}
+      assert validate(self_generated_assertion(signature: :omit)) == {:error, :invalid_assertion}
     end
 
     test "rejects an assertion object without authenticator data instead of crashing" do
-      assertion_object = CBOR.encode(%{"signature" => bytes(@signature)})
+      assert validate(self_generated_assertion(authenticator_data: :omit)) ==
+               {:error, :invalid_assertion}
+    end
 
-      assert validate(assertion_object) == {:error, :invalid_assertion}
+    test "rejects an assertion whose signature is not a CBOR byte string" do
+      for signature <- ["a CBOR text string", nil, %CBOR.Tag{tag: 42, value: "tagged"}] do
+        assert validate(self_generated_assertion(signature: signature)) ==
+                 {:error, :invalid_assertion}
+      end
+    end
+
+    test "rejects an assertion whose authenticator data is not a CBOR byte string" do
+      for auth_data <- ["a CBOR text string", nil, %CBOR.Tag{tag: 42, value: "tagged"}] do
+        assert validate(self_generated_assertion(authenticator_data: auth_data)) ==
+                 {:error, :invalid_assertion}
+      end
     end
   end
 

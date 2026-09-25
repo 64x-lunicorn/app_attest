@@ -1,7 +1,7 @@
 defmodule AppAttest.RootCertificateTest do
   use ExUnit.Case, async: true
 
-  alias AppAttest.RootCertificate
+  alias AppAttest.{Fixtures, RootCertificate}
 
   describe "default/0" do
     test "is Apple's own App Attest root certificate" do
@@ -37,53 +37,34 @@ defmodule AppAttest.RootCertificateTest do
       # own, cause rejection.
       assert RootCertificate.trusted?(
                RootCertificate.default(),
-               AppAttest.Fixtures.certificate_chain()
+               Fixtures.certificate_chain()
              )
     end
 
     test "is false when the real chain is checked against an unrelated root" do
       refute RootCertificate.trusted?(
-               AppAttest.Fixtures.untrusted_root(),
-               AppAttest.Fixtures.certificate_chain()
+               Fixtures.untrusted_root(),
+               Fixtures.certificate_chain()
              )
     end
 
     test "is false for two certificates that were not issued from one another" do
       refute RootCertificate.trusted?(
-               AppAttest.Fixtures.untrusted_root(),
-               [AppAttest.Fixtures.untrusted_root()]
+               Fixtures.untrusted_root(),
+               [Fixtures.untrusted_root()]
              )
     end
 
     test "is false, not a crash, for junk in place of the root or of a chain certificate" do
-      [leaf_der | _intermediates] = AppAttest.Fixtures.certificate_chain()
+      [leaf_der | _intermediates] = Fixtures.certificate_chain()
 
-      refute RootCertificate.trusted?(<<1, 2, 3>>, AppAttest.Fixtures.certificate_chain())
+      refute RootCertificate.trusted?(<<1, 2, 3>>, Fixtures.certificate_chain())
       refute RootCertificate.trusted?(RootCertificate.default(), [leaf_der, <<1, 2, 3>>])
     end
 
-    # OTP's decoder and path validation raise or exit for DER damaged deep
-    # inside a certificate; a fixed seed keeps these mutations deterministic.
-    test "is false, not a crash, for a real chain with any single byte of a certificate changed" do
-      chain = AppAttest.Fixtures.certificate_chain()
-      state = :rand.seed_s(:exsss, {16, 16, 16})
-
-      Enum.reduce(0..(length(chain) - 1), state, fn index, state ->
-        Enum.reduce(1..200, state, fn _mutation, state ->
-          der = Enum.at(chain, index)
-          {position, state} = :rand.uniform_s(byte_size(der), state)
-          {value, state} = :rand.uniform_s(256, state)
-          offset = position - 1
-          <<before::binary-size(^offset), byte, rest::binary>> = der
-          mutated = List.replace_at(chain, index, <<before::binary, value - 1, rest::binary>>)
-
-          # Only a change that leaves the byte as it was can still be trusted.
-          assert RootCertificate.trusted?(RootCertificate.default(), mutated) ==
-                   (byte == value - 1)
-
-          state
-        end)
-      end)
-    end
+    # A real chain with any single byte of a certificate changed is proven
+    # rejected, never a crash, once, through `AppAttest.Attestation.validate/6`
+    # in its own test file: every certificate that still decodes goes on to
+    # `trusted?/2` there.
   end
 end
