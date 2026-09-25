@@ -90,7 +90,8 @@ defmodule AppAttest.RootCertificate do
   @doc """
   Whether `chain` — a leaf-first list of DER-encoded certificates, as
   Apple's `x5c` array carries them, not including `root` itself — chains
-  to the trusted `root` certificate.
+  to the trusted `root` certificate. Junk in place of `root` or of any
+  certificate in `chain` is `false`, never a raise (#16).
 
   Certificate validity periods are not checked. App Attest's own leaf
   certificates are short-lived by design (Apple issues a fresh one per
@@ -102,13 +103,22 @@ defmodule AppAttest.RootCertificate do
   """
   @spec trusted?(der(), [der(), ...]) :: boolean()
   def trusted?(root, [_ | _] = chain) when is_binary(root) do
-    path = Enum.reverse(chain)
+    # OTP's path validation raises on anything that is not a DER
+    # certificate, so `root` and every certificate of `chain` are parsed
+    # first: junk anywhere means no trusted chain, never a crash (#16).
+    if Enum.all?([root | chain], &certificate?/1) do
+      path = Enum.reverse(chain)
 
-    case :public_key.pkix_path_validation(root, path, verify_fun: {&accept_expired/3, []}) do
-      {:ok, _} -> true
-      {:error, _} -> false
+      case :public_key.pkix_path_validation(root, path, verify_fun: {&accept_expired/3, []}) do
+        {:ok, _} -> true
+        {:error, _} -> false
+      end
+    else
+      false
     end
   end
+
+  defp certificate?(der), do: match?({:ok, _certificate}, X509.Certificate.from_der(der))
 
   # Chain validation is otherwise OTP's own PKIX rules (RFC 5280); only the
   # expiry check is relaxed, for the reason `trusted?/2` documents above.

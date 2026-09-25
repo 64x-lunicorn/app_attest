@@ -54,5 +54,12 @@ defmodule AppAttest.RootCertificateTest do
                [AppAttest.Fixtures.untrusted_root()]
              )
     end
+
+    test "is false, not a crash, for junk in place of the root or of a chain certificate" do
+      [leaf_der | _intermediates] = AppAttest.Fixtures.certificate_chain()
+
+      refute RootCertificate.trusted?(<<1, 2, 3>>, AppAttest.Fixtures.certificate_chain())
+      refute RootCertificate.trusted?(RootCertificate.default(), [leaf_der, <<1, 2, 3>>])
+    end
   end
 end

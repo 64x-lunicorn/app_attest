@@ -354,6 +354,32 @@ defmodule AppAttest.AttestationTest do
       assert validate(attestation_object(%{"x5c" => [bytes(<<1, 2, 3>>)]}, bytes(@auth_data))) ==
                {:error, :invalid_attestation}
     end
+
+    test "rejects Apple's real fixture with junk in place of its intermediate instead of crashing" do
+      [leaf_der | _intermediates] = Fixtures.certificate_chain()
+      {:ok, decoded, ""} = CBOR.decode(Fixtures.attestation())
+      junk_chain = put_in(decoded, ["attStmt", "x5c"], [bytes(leaf_der), bytes(<<1, 2, 3>>)])
+
+      assert Attestation.validate(
+               CBOR.encode(junk_chain),
+               Fixtures.key_id(),
+               Fixtures.challenge(),
+               Fixtures.app_id(),
+               RootCertificate.default(),
+               :development
+             ) == {:error, :invalid_attestation}
+    end
+
+    test "rejects Apple's real fixture against a root that is not a certificate instead of crashing" do
+      assert Attestation.validate(
+               Fixtures.attestation(),
+               Fixtures.key_id(),
+               Fixtures.challenge(),
+               Fixtures.app_id(),
+               <<1, 2, 3>>,
+               :development
+             ) == {:error, :untrusted_root}
+    end
   end
 
   describe "rejection/0" do
