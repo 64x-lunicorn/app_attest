@@ -15,10 +15,13 @@ defmodule AppAttest.RiskMetric do
   the caller to store on its Device in place of the one it sent; it
   persists nothing on its own.
 
-  A receipt's signature chains to Apple's general-purpose "Apple Root CA -
-  G3" (`AppAttest.RootCertificate.apple_root_ca_g3/0`), not to the App
-  Attest-specific root an Attestation's own chain uses
-  (`AppAttest.RootCertificate.default/0`).
+  A receipt's signature is verified against Apple's general-purpose "Apple
+  Root CA - G3" (`AppAttest.RootCertificate.apple_root_ca_g3/0`), not the
+  App Attest-specific root an Attestation's own chain uses
+  (`AppAttest.RootCertificate.default/0`). Which of the two a real Apple
+  receipt chains to is still open (#171, #174) until one has been verified
+  in Corridor's first TestFlight round; `root` stays an explicit parameter
+  either way.
 
   Each receipt carries its own validity window, which `fetch/5` returns
   alongside the risk metric: Apple answers a refresh sent before a
@@ -122,8 +125,9 @@ defmodule AppAttest.RiskMetric do
   @doc """
   Sends `receipt` (the device's current one) to Apple's risk-metric
   endpoint for `environment`, authenticated with `device_check_key`, and
-  verifies the new receipt Apple returns against `root` — always
-  `AppAttest.RootCertificate.apple_root_ca_g3/0` in production; a test
+  verifies the new receipt Apple returns against `root` — currently
+  `AppAttest.RootCertificate.apple_root_ca_g3/0` in production, pending the
+  open root question (#171, #174); a test
   substitutes its own, the same way `AppAttest.Attestation.validate/6`
   takes its own root explicitly.
 
