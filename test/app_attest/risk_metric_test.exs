@@ -1,28 +1,64 @@
 defmodule AppAttest.RiskMetricTest do
   use ExUnit.Case, async: true
 
-  alias AppAttest.{Fixtures, RiskMetric}
+  alias AppAttest.{Attestation, Device, Fixtures, RiskMetric, RootCertificate}
 
-  # `fetch/5`'s own transport seam (`write-tests`: mocking only at this
+  # `fetch/4`'s own transport seam (`write-tests`: mocking only at this
   # module's system boundary, Apple's HTTP endpoint) - a stand-in that
   # hands back a fixed response regardless of the request, the way a real
   # Apple server would for a given receipt.
   defp respond(status, body), do: fn _request -> {:ok, status, body} end
 
-  describe "fetch/5" do
-    test "accepts a genuine receipt and returns its risk metric" do
+  # The Device a genuine Attestation yields: Apple's real fixture one.
+  defp attested_device do
+    {:ok, device} =
+      Attestation.validate(
+        Fixtures.attestation(),
+        Fixtures.key_id(),
+        Fixtures.challenge(),
+        Fixtures.app_id(),
+        RootCertificate.default(),
+        :development
+      )
+
+    device
+  end
+
+  # A Device as a caller stored it, holding "previous-receipt" as its
+  # current receipt.
+  defp stored_device(environment \\ :development) do
+    {_private_key, public_key} = Fixtures.device_key_pair()
+
+    %Device{
+      public_key: public_key,
+      counter: 0,
+      environment: environment,
+      receipt: "previous-receipt"
+    }
+  end
+
+  describe "fetch/4" do
+    test "returns the same Device with only its Receipt replaced by Apple's new one" do
+      device = attested_device()
       chain = Fixtures.risk_metric_chain()
       receipt = Fixtures.receipt(42, chain)
       transport = respond(200, Base.encode64(receipt))
 
-      assert {:ok, %{risk_metric: 42, receipt: ^receipt}} =
-               RiskMetric.fetch(
-                 "previous-receipt",
-                 :development,
-                 Fixtures.device_check_key(),
-                 chain.root,
-                 transport: transport
-               )
+      assert RiskMetric.fetch(device, Fixtures.device_check_key(), chain.root,
+               transport: transport
+             ) ==
+               {:ok,
+                %{
+                  device: %Device{
+                    public_key: device.public_key,
+                    counter: device.counter,
+                    environment: device.environment,
+                    receipt: receipt
+                  },
+                  risk_metric: 42,
+                  not_before: Fixtures.receipt_not_before(),
+                  expiration_time: Fixtures.receipt_expiration_time()
+                }}
     end
 
     test "returns the receipt's own validity dates so a caller can time its refresh" do
@@ -32,8 +68,7 @@ defmodule AppAttest.RiskMetricTest do
 
       assert {:ok, result} =
                RiskMetric.fetch(
-                 "previous-receipt",
-                 :development,
+                 stored_device(),
                  Fixtures.device_check_key(),
                  chain.root,
                  transport: transport
@@ -55,7 +90,7 @@ defmodule AppAttest.RiskMetricTest do
       end
 
       assert {:ok, _result} =
-               RiskMetric.fetch("previous-receipt", :production, device_check_key, chain.root,
+               RiskMetric.fetch(stored_device(:production), device_check_key, chain.root,
                  transport: transport
                )
 
@@ -114,8 +149,7 @@ defmodule AppAttest.RiskMetricTest do
 
         assert {:error, :invalid_receipt} =
                  RiskMetric.fetch(
-                   "previous-receipt",
-                   :development,
+                   stored_device(),
                    Fixtures.device_check_key(),
                    chain.root,
                    transport: transport
@@ -128,8 +162,7 @@ defmodule AppAttest.RiskMetricTest do
 
       assert {:error, :invalid_receipt} =
                RiskMetric.fetch(
-                 "previous-receipt",
-                 :development,
+                 stored_device(),
                  Fixtures.device_check_key(),
                  Fixtures.risk_metric_chain().root,
                  transport: transport
@@ -141,8 +174,7 @@ defmodule AppAttest.RiskMetricTest do
 
       assert {:error, {:apple_error, 401, ""}} =
                RiskMetric.fetch(
-                 "previous-receipt",
-                 :development,
+                 stored_device(),
                  Fixtures.device_check_key(),
                  Fixtures.risk_metric_chain().root,
                  transport: transport
@@ -154,8 +186,7 @@ defmodule AppAttest.RiskMetricTest do
 
       assert {:error, {:transport_error, :timeout}} =
                RiskMetric.fetch(
-                 "previous-receipt",
-                 :development,
+                 stored_device(),
                  Fixtures.device_check_key(),
                  Fixtures.risk_metric_chain().root,
                  transport: transport

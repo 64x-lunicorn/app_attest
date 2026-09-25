@@ -103,13 +103,18 @@ defmodule AppAttest.Assertion do
   # An Assertion's signature covers Apple's own nonce construction, built
   # by the one shared `AppAttest.AuthenticatorData.nonce/2` an Attestation's
   # own nonce check uses too, never `auth_data` alone.
-  defp check_signature(auth_data, client_data, signature, public_key) do
+  #
+  # The Device stores its public key as a DER-encoded SubjectPublicKeyInfo
+  # (`AppAttest.Device`), so it is decoded here, behind the seam, into the
+  # term `:public_key.verify/4` needs.
+  defp check_signature(auth_data, client_data, signature, public_key_der) do
     nonce = AuthenticatorData.nonce(auth_data, client_data)
 
-    if :public_key.verify(nonce, :sha256, signature, public_key) do
+    with {:ok, public_key} <- X509.PublicKey.from_der(public_key_der),
+         true <- :public_key.verify(nonce, :sha256, signature, public_key) do
       :ok
     else
-      {:error, :invalid_signature}
+      _no_match -> {:error, :invalid_signature}
     end
   end
 

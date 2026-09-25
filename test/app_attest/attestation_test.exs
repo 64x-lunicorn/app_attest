@@ -16,6 +16,13 @@ defmodule AppAttest.AttestationTest do
   # the expected value does not come from the code under test.
   @fixture_receipt_sha256 "4e52998201baa1a9c2572f8560d5737bca64dbf62e7a240abddb08bf967df2ec"
 
+  # SHA-256 of the real fixture leaf's DER-encoded SubjectPublicKeyInfo,
+  # taken once outside this code with `openssl x509 -pubkey -noout |
+  # openssl pkey -pubin -outform der | openssl dgst -sha256` over the
+  # fixture's leaf, so the expected value does not come from the code under
+  # test.
+  @fixture_public_key_sha256 "f2beac92b24f8cde77a2abe21532aad49a8f387317de58175d88f0e9db1e2b63"
+
   # Validates a self-generated Attestation (`Fixtures.self_generated_attestation/1`)
   # for exactly what it was built for, expecting `environment`.
   defp validate_self_generated(attestation, environment \\ :development) do
@@ -60,11 +67,19 @@ defmodule AppAttest.AttestationTest do
                  :development
                )
 
-      assert %Device{counter: 0, environment: :development, public_key: {{:ECPoint, _}, _}} =
-               device
+      assert %Device{counter: 0, environment: :development} = device
 
       assert Base.encode16(:crypto.hash(:sha256, device.receipt), case: :lower) ==
                @fixture_receipt_sha256
+    end
+
+    test "returns the attested public key as the DER-encoded SubjectPublicKeyInfo of its credential certificate" do
+      assert {:ok, %Device{public_key: public_key}} = validate_fixture(@fixture_key_id)
+
+      assert is_binary(public_key)
+
+      assert Base.encode16(:crypto.hash(:sha256, public_key), case: :lower) ==
+               @fixture_public_key_sha256
     end
 
     test "accepts Apple's real fixture Attestation for its own key_id" do

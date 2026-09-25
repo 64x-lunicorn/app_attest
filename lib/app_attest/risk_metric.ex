@@ -5,15 +5,15 @@ defmodule AppAttest.RiskMetric do
   Assertion (Corridor ADR 0007).
 
   Apple's own "Assessing fraud risk" guide describes this as a *receipt
-  exchange*, not a per-device lookup: the caller sends whatever receipt it
-  currently holds — its `AppAttest.Device`'s `receipt`, which
+  exchange*, not a per-device lookup: the Device's current receipt — which
   `AppAttest.Attestation.validate/6` fills from the Attestation's own
-  `attStmt.receipt` at first — to Apple's server, authenticated with a
-  DeviceCheck JWT, and gets back a new receipt carrying the risk metric.
+  `attStmt.receipt` at first — goes to Apple's server, authenticated with a
+  DeviceCheck JWT, and a new receipt carrying the risk metric comes back.
   The device's Key ID appears nowhere in that request. `app_attest` holds
-  no device state itself (Corridor ADR 0006): `fetch/5` returns the new
-  receipt for the caller to store on its Device in place of the one it
-  sent; it persists nothing on its own.
+  no device state itself (Corridor ADR 0006): `fetch/4` takes the caller's
+  stored `AppAttest.Device` and returns it with its Receipt moved on, for
+  the caller to persist in place of the one it passed; it persists nothing
+  on its own.
 
   The new receipt is verified and read by `AppAttest.Receipt.verify/2`
   against Apple's general-purpose "Apple Root CA - G3"
@@ -27,14 +27,14 @@ defmodule AppAttest.RiskMetric do
   validity dates answers this request; any other verified Receipt is
   `:invalid_receipt`.
 
-  Each receipt carries its own validity window, which `fetch/5` returns
+  Each receipt carries its own validity window, which `fetch/4` returns
   alongside the risk metric: Apple answers a refresh sent before a
   receipt's Not Before date with `304 Not Modified`, and may not honour one
-  sent after its Expiration Time, so a caller schedules the next `fetch/5`
+  sent after its Expiration Time, so a caller schedules the next `fetch/4`
   between the two.
   """
 
-  alias AppAttest.{AuthenticatorData, Receipt, RootCertificate}
+  alias AppAttest.{Device, Receipt, RootCertificate}
 
   @typedoc """
   The Apple DeviceCheck key that authenticates this request to Apple: an
@@ -54,11 +54,13 @@ defmodule AppAttest.RiskMetric do
         }
 
   @typedoc """
-  What the caller now persists in place of the receipt it sent.
+  What a successful `fetch/4` returns.
 
+    * `:device` - the Device passed in, with only its `receipt` replaced by
+      Apple's new one, for the caller to persist in its place; the next
+      refresh sends that receipt.
     * `:risk_metric` - Apple's own estimate of how many distinct devices
       have used this attested key.
-    * `:receipt` - the new receipt, to send on the next refresh.
     * `:not_before` - the receipt's own Not Before date. Apple answers a
       refresh sent before it with `304 Not Modified`, so a caller that wants
       a new receipt waits until this date.
@@ -67,8 +69,8 @@ defmodule AppAttest.RiskMetric do
       between the two dates.
   """
   @type result :: %{
+          device: Device.t(),
           risk_metric: non_neg_integer(),
-          receipt: binary(),
           not_before: DateTime.t(),
           expiration_time: DateTime.t()
         }
@@ -90,7 +92,7 @@ defmodule AppAttest.RiskMetric do
           | {:apple_error, non_neg_integer(), binary()}
           | {:transport_error, term()}
 
-  @typedoc "A request built by `fetch/5`, for `opts[:transport]` to perform."
+  @typedoc "A request built by `fetch/4`, for `opts[:transport]` to perform."
   @type request :: %{url: charlist(), authorization: String.t(), body: binary()}
 
   @typedoc "What `opts[:transport]` returns: Apple's status and raw response body."
@@ -107,8 +109,8 @@ defmodule AppAttest.RiskMetric do
   @p256_coordinate_size 32
 
   @doc """
-  Sends `receipt` (the device's current one) to Apple's risk-metric
-  endpoint for `environment`, authenticated with `device_check_key`, and
+  Sends `device`'s current `receipt` to Apple's risk-metric endpoint for
+  its `environment`, authenticated with `device_check_key`, and
   verifies the new receipt Apple returns against `root` —
   `AppAttest.RootCertificate.apple_root_ca_g3/0` in production, the root a
   real Apple Receipt chains to; a test substitutes its own, the same way `AppAttest.Attestation.validate/6`
@@ -118,20 +120,25 @@ defmodule AppAttest.RiskMetric do
   this module's only system boundary; every real caller omits it and gets
   `AppAttest.RiskMetric`'s own `:httpc`-based default.
 
-  Returns `{:ok, result}` with the risk metric, the new receipt to persist
-  in place of the one sent, and that receipt's own validity window for
-  timing the next refresh, or `{:error, rejection}`. Never affects whether
+  Returns `{:ok, result}` with the Device carrying the new receipt, to
+  persist in place of the one passed, the risk metric, and that receipt's
+  own validity window for timing the next refresh, or `{:error, rejection}`;
+  on an error the caller keeps the Device it has. Never affects whether
   an Attestation or Assertion is accepted (Corridor ADR 0007) — nothing in
   this module is an input to either's own `validate/N`.
   """
   @spec fetch(
-          binary(),
-          AuthenticatorData.environment(),
+          Device.t(),
           device_check_key(),
           RootCertificate.der(),
           transport: transport()
         ) :: {:ok, result()} | {:error, rejection()}
-  def fetch(receipt, environment, device_check_key, root, opts \\ []) do
+  def fetch(
+        %Device{receipt: receipt, environment: environment} = device,
+        device_check_key,
+        root,
+        opts \\ []
+      ) do
     transport = Keyword.get(opts, :transport, &http_request/1)
 
     request = %{
@@ -144,7 +151,7 @@ defmodule AppAttest.RiskMetric do
       {:ok, 200, body} ->
         with {:ok, new_receipt} <- decode_base64(body),
              {:ok, verified} <- Receipt.verify(new_receipt, root) do
-          risk_metric_fields(verified, new_receipt)
+          risk_metric_fields(verified, %Device{device | receipt: new_receipt})
         end
 
       {:ok, status, body} ->
@@ -160,19 +167,19 @@ defmodule AppAttest.RiskMetric do
   # `ATTEST` Receipt or one missing either field is not.
   defp risk_metric_fields(
          %Receipt{type: :receipt, risk_metric: risk_metric, not_before: not_before} = verified,
-         new_receipt
+         device
        )
        when is_integer(risk_metric) and not is_nil(not_before) do
     {:ok,
      %{
+       device: device,
        risk_metric: risk_metric,
-       receipt: new_receipt,
        not_before: not_before,
        expiration_time: verified.expiration_time
      }}
   end
 
-  defp risk_metric_fields(_other_receipt, _new_receipt), do: {:error, :invalid_receipt}
+  defp risk_metric_fields(_other_receipt, _device), do: {:error, :invalid_receipt}
 
   defp host(:development), do: @development_host
   defp host(:production), do: @production_host

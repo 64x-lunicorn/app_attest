@@ -89,7 +89,7 @@ defmodule AppAttest.Attestation do
   key, start Counter, App Attest environment (`:development` or
   `:production`, read from the attestation's own `aaguid`, and so
   always `expected_environment`) and the receipt the Attestation carried
-  in `attStmt.receipt` (the one the first `AppAttest.RiskMetric.fetch/5`
+  in `attStmt.receipt` (the one the first `AppAttest.RiskMetric.fetch/4`
   sends) for the caller to persist, or `{:error, rejection}`.
   """
   @spec validate(
@@ -115,7 +115,7 @@ defmodule AppAttest.Attestation do
          :ok <- check_credential_id(authenticator_data.credential_id, key_id_bytes) do
       {:ok,
        %Device{
-         public_key: X509.Certificate.public_key(leaf),
+         public_key: leaf |> X509.Certificate.public_key() |> X509.PublicKey.to_der(),
          counter: authenticator_data.counter,
          environment: environment,
          receipt: receipt

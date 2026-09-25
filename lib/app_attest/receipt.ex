@@ -11,7 +11,7 @@ defmodule AppAttest.Receipt do
       `AppAttest.Attestation.validate/6` returns). It carries an Expiration
       Time but no risk metric and no Not Before date.
     * `:receipt` - issued by Apple's risk-metric endpoint in exchange for the
-      previous one (`AppAttest.RiskMetric.fetch/5`). Only this type carries
+      previous one (`AppAttest.RiskMetric.fetch/4`). Only this type carries
       the risk metric and a Not Before date.
 
   `AppAttest.Attestation.validate/6` hands its Receipt through unverified; a

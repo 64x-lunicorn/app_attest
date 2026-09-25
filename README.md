@@ -44,7 +44,7 @@ app_attest checks that the requests reaching your server come from a genuine, un
 ```text
 iOS app --attestation--> your server --> AppAttest.Attestation.validate --> Device: public key, Counter, environment, Receipt (you store it)
 iOS app --assertion----> your server --> AppAttest.Assertion.validate   --> Device with the new Counter (you store it)
-                         your server --> AppAttest.RiskMetric.fetch     --> Risk metric and new Receipt (you record them)
+                         your server --> AppAttest.RiskMetric.fetch     --> Device with the new Receipt, and the Risk metric (you store and record them)
 ```
 
 Every function takes the state your server stored earlier as input and returns what changed, so storage, timing and refresh stay with the caller.
@@ -60,14 +60,9 @@ root = AppAttest.RootCertificate.default()
 {:ok, device} =
   AppAttest.Assertion.validate(assertion_object, client_data, app_id, device, :production)
 
-# Now and then: record the Risk metric and store the new Receipt.
-{:ok, %{risk_metric: risk_metric, receipt: receipt}} =
-  AppAttest.RiskMetric.fetch(
-    device.receipt,
-    device.environment,
-    device_check_key,
-    AppAttest.RootCertificate.apple_root_ca_g3()
-  )
+# Now and then: record the Risk metric and store the Device with its new Receipt.
+{:ok, %{device: device, risk_metric: risk_metric}} =
+  AppAttest.RiskMetric.fetch(device, device_check_key, AppAttest.RootCertificate.apple_root_ca_g3())
 ```
 
 ## Quickstart

@@ -1,11 +1,11 @@
 defmodule AppAttest.RiskMetricAppleTest do
   @moduledoc """
-  `AppAttest.RiskMetric.fetch/5` against Apple's *real* development
+  `AppAttest.RiskMetric.fetch/4` against Apple's *real* development
   risk-metric endpoint, over its real `:httpc` transport — the one part of
   this module that no stand-in can prove.
 
   Everything `AppAttest.RiskMetricTest` asserts about the request is
-  self-consistency: it checks that the JWT `fetch/5` builds verifies against
+  self-consistency: it checks that the JWT `fetch/4` builds verifies against
   the very key the same test generated. That cannot catch a JWT Apple
   itself rejects — a wrong signature encoding, a wrong header, a missing
   claim, a "Bearer " prefix Apple does not want. Only Apple can, and it
@@ -47,13 +47,13 @@ defmodule AppAttest.RiskMetricAppleTest do
 
   use ExUnit.Case, async: true
 
-  alias AppAttest.{AppleCredentials, Attestation, Device, Fixtures, RiskMetric, RootCertificate}
+  alias AppAttest.{AppleCredentials, Attestation, Fixtures, RiskMetric, RootCertificate}
 
   @moduletag :apple_endpoint
   # A real round trip to Apple, over the real network.
   @moduletag timeout: 60_000
 
-  describe "fetch/5 against Apple's real development endpoint" do
+  describe "fetch/4 against Apple's real development endpoint" do
     test "Apple accepts a JWT signed by the real DeviceCheck key" do
       assert {:error, {:apple_error, status, _body}} = fetch(AppleCredentials.device_check_key!())
 
@@ -80,7 +80,7 @@ defmodule AppAttest.RiskMetricAppleTest do
   # No `opts[:transport]`: the real `:httpc` call is half of what is under
   # test here.
   defp fetch(device_check_key) do
-    {:ok, %Device{receipt: receipt}} =
+    {:ok, device} =
       Attestation.validate(
         Fixtures.attestation(),
         Fixtures.key_id(),
@@ -91,8 +91,7 @@ defmodule AppAttest.RiskMetricAppleTest do
       )
 
     RiskMetric.fetch(
-      receipt,
-      :development,
+      device,
       device_check_key,
       RootCertificate.apple_root_ca_g3()
     )

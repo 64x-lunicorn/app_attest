@@ -36,6 +36,55 @@ defmodule AppAttest.AssertionTest do
   end
 
   describe "validate/5" do
+    test "accepts a genuine Assertion for a Device serialised and read back byte for byte" do
+      attestation = Fixtures.self_generated_attestation()
+
+      {:ok, device} =
+        AppAttest.Attestation.validate(
+          attestation.attestation,
+          attestation.key_id,
+          attestation.challenge,
+          attestation.app_id,
+          attestation.root,
+          :development
+        )
+
+      # What a caller's storage holds: plain JSON, every binary base64, with
+      # no knowledge of X.509 or of OTP's own key terms.
+      stored =
+        IO.iodata_to_binary(
+          :json.encode(%{
+            "public_key" => Base.encode64(device.public_key),
+            "counter" => device.counter,
+            "environment" => Atom.to_string(device.environment),
+            "receipt" => Base.encode64(device.receipt)
+          })
+        )
+
+      read_back = :json.decode(stored)
+
+      restored = %Device{
+        public_key: Base.decode64!(read_back["public_key"]),
+        counter: read_back["counter"],
+        environment: String.to_existing_atom(read_back["environment"]),
+        receipt: Base.decode64!(read_back["receipt"])
+      }
+
+      client_data = Fixtures.client_data()
+
+      assertion_object =
+        Fixtures.assertion(1, attestation.app_id, client_data, attestation.private_key)
+
+      assert {:ok, %Device{counter: 1}} =
+               Assertion.validate(
+                 assertion_object,
+                 client_data,
+                 attestation.app_id,
+                 restored,
+                 :development
+               )
+    end
+
     test "returns the same Device with only its Counter moved on" do
       {private_key, public_key} = Fixtures.device_key_pair()
       device = device(public_key, 41)
@@ -50,6 +99,20 @@ defmodule AppAttest.AssertionTest do
                   environment: :development,
                   receipt: "the-device's-current-receipt"
                 }}
+    end
+
+    test "rejects a Device whose public key is not a DER-encoded key as an invalid signature" do
+      {private_key, _public_key} = Fixtures.device_key_pair()
+      client_data = Fixtures.client_data()
+      assertion_object = Fixtures.assertion(42, @app_id, client_data, private_key)
+
+      assert Assertion.validate(
+               assertion_object,
+               client_data,
+               @app_id,
+               device("not a DER-encoded public key", 41),
+               :development
+             ) == {:error, :invalid_signature}
     end
 
     test "rejects an Assertion expected in a different environment than the Device's" do

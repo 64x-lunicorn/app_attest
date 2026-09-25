@@ -150,11 +150,14 @@ defmodule AppAttest.Fixtures do
   Assertion's "genuine" scenario and its rejection fixtures are self-signed
   here instead, the same way `untrusted_root/0` self-signs a substitute
   root.
+
+  The public key comes back the way an `AppAttest.Device` stores it: the
+  DER-encoded SubjectPublicKeyInfo.
   """
-  @spec device_key_pair() :: {X509.PrivateKey.t(), :public_key.public_key()}
+  @spec device_key_pair() :: {X509.PrivateKey.t(), binary()}
   def device_key_pair do
     private_key = X509.PrivateKey.new_ec(:secp256r1)
-    {private_key, X509.PublicKey.derive(private_key)}
+    {private_key, private_key |> X509.PublicKey.derive() |> X509.PublicKey.to_der()}
   end
 
   @doc """
@@ -237,6 +240,9 @@ defmodule AppAttest.Fixtures do
   * `:root` - the self-signed leaf itself, which doubles as the trusted
     root, so only what a test deliberately varies can make it fail.
   * `:app_id`, `:challenge` - the App ID and challenge it was built for.
+  * `:private_key` - the attested key's private key, which only the device
+    holds, to sign Assertions (`assertion/5`) for the Device this
+    Attestation yields.
 
   By default its authenticator data is consistent with `key_id`: Counter
   0, Apple's development aaguid and a credentialId equal to the Key ID.
@@ -269,7 +275,8 @@ defmodule AppAttest.Fixtures do
           key_id: String.t(),
           root: AppAttest.RootCertificate.der(),
           app_id: String.t(),
-          challenge: binary()
+          challenge: binary(),
+          private_key: X509.PrivateKey.t()
         }
   def self_generated_attestation(opts \\ []) do
     app_id = Keyword.get(opts, :app_id, @self_generated_app_id)
@@ -319,7 +326,8 @@ defmodule AppAttest.Fixtures do
       key_id: Base.encode64(key_id_bytes),
       root: leaf_der,
       app_id: app_id,
-      challenge: challenge
+      challenge: challenge,
+      private_key: private_key
     }
   end
 
@@ -359,7 +367,7 @@ defmodule AppAttest.Fixtures do
   real chain to Apple Root CA - G3
   (`AppAttest.RootCertificate.apple_root_ca_g3/0`): `root` is the
   substitute trusted root a test passes to `AppAttest.Receipt.verify/2` or
-  `AppAttest.RiskMetric.fetch/5` in place of the real one; `leaf` and
+  `AppAttest.RiskMetric.fetch/4` in place of the real one; `leaf` and
   `leaf_key` sign a receipt built by `receipt/2`. Issued from one another
   rather than self-signed like `untrusted_root/0`, because
   `AppAttest.Receipt` finds the signer
