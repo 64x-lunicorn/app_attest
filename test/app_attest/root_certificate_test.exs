@@ -61,5 +61,29 @@ defmodule AppAttest.RootCertificateTest do
       refute RootCertificate.trusted?(<<1, 2, 3>>, AppAttest.Fixtures.certificate_chain())
       refute RootCertificate.trusted?(RootCertificate.default(), [leaf_der, <<1, 2, 3>>])
     end
+
+    # OTP's decoder and path validation raise or exit for DER damaged deep
+    # inside a certificate; a fixed seed keeps these mutations deterministic.
+    test "is false, not a crash, for a real chain with any single byte of a certificate changed" do
+      chain = AppAttest.Fixtures.certificate_chain()
+      state = :rand.seed_s(:exsss, {16, 16, 16})
+
+      Enum.reduce(0..(length(chain) - 1), state, fn index, state ->
+        Enum.reduce(1..200, state, fn _mutation, state ->
+          der = Enum.at(chain, index)
+          {position, state} = :rand.uniform_s(byte_size(der), state)
+          {value, state} = :rand.uniform_s(256, state)
+          offset = position - 1
+          <<before::binary-size(^offset), byte, rest::binary>> = der
+          mutated = List.replace_at(chain, index, <<before::binary, value - 1, rest::binary>>)
+
+          # Only a change that leaves the byte as it was can still be trusted.
+          assert RootCertificate.trusted?(RootCertificate.default(), mutated) ==
+                   (byte == value - 1)
+
+          state
+        end)
+      end)
+    end
   end
 end

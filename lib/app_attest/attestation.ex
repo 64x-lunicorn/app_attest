@@ -128,12 +128,12 @@ defmodule AppAttest.Attestation do
   # only the leaf: junk in place of an intermediate is a malformed
   # Attestation, rejected here rather than raised on inside OTP's path
   # validation (#16). Returns the parsed leaf.
-  defp parse_chain([leaf_der | _rest_of_chain] = chain) do
-    if Enum.all?(chain, &match?({:ok, _certificate}, X509.Certificate.from_der(&1))) do
-      {:ok, X509.Certificate.from_der!(leaf_der)}
-    else
-      {:error, :invalid_attestation}
-    end
+  defp parse_chain([_leaf_der | _rest_of_chain] = chain) do
+    [leaf | _rest] = parsed = Enum.map(chain, &RootCertificate.parse/1)
+
+    if Enum.all?(parsed, &match?({:ok, _certificate}, &1)),
+      do: leaf,
+      else: {:error, :invalid_attestation}
   end
 
   defp check_trusted_chain(root, chain) do

@@ -48,6 +48,16 @@ defmodule AppAttest.AttestationTest do
 
   defp bytes(value), do: %CBOR.Tag{tag: :bytes, value: value}
 
+  # Replaces one randomly chosen byte of `der` with a random value, threading
+  # the explicit `:rand` state so the caller's mutations stay deterministic.
+  defp mutate_byte(der, state) do
+    {position, state} = :rand.uniform_s(byte_size(der), state)
+    {value, state} = :rand.uniform_s(256, state)
+    offset = position - 1
+    <<before::binary-size(^offset), _byte, rest::binary>> = der
+    {<<before::binary, value - 1, rest::binary>>, state}
+  end
+
   defp validate(attestation_object) do
     Attestation.validate(
       attestation_object,
@@ -368,6 +378,35 @@ defmodule AppAttest.AttestationTest do
                RootCertificate.default(),
                :development
              ) == {:error, :invalid_attestation}
+    end
+
+    # OTP's certificate decoding and path validation raise or exit in many
+    # different ways for DER that is damaged deep inside, not only for
+    # junk. A fixed seed keeps the mutations, and so the test, deterministic.
+    test "rejects Apple's real fixture with any single byte of a certificate changed instead of crashing" do
+      {:ok, decoded, ""} = CBOR.decode(Fixtures.attestation())
+      chain = Fixtures.certificate_chain()
+      state = :rand.seed_s(:exsss, {16, 16, 16})
+
+      Enum.reduce(0..(length(chain) - 1), state, fn index, state ->
+        Enum.reduce(1..200, state, fn _mutation, state ->
+          {mutated, state} = mutate_byte(Enum.at(chain, index), state)
+          x5c = chain |> List.replace_at(index, mutated) |> Enum.map(&bytes/1)
+
+          result =
+            Attestation.validate(
+              CBOR.encode(put_in(decoded, ["attStmt", "x5c"], x5c)),
+              Fixtures.key_id(),
+              Fixtures.challenge(),
+              Fixtures.app_id(),
+              RootCertificate.default(),
+              :development
+            )
+
+          assert match?({:ok, %Device{}}, result) or match?({:error, _rejection}, result)
+          state
+        end)
+      end)
     end
 
     test "rejects Apple's real fixture against a root that is not a certificate instead of crashing" do

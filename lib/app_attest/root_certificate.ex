@@ -106,19 +106,39 @@ defmodule AppAttest.RootCertificate do
     # OTP's path validation raises on anything that is not a DER
     # certificate, so `root` and every certificate of `chain` are parsed
     # first: junk anywhere means no trusted chain, never a crash (#16).
-    if Enum.all?([root | chain], &certificate?/1) do
-      path = Enum.reverse(chain)
-
-      case :public_key.pkix_path_validation(root, path, verify_fun: {&accept_expired/3, []}) do
-        {:ok, _} -> true
-        {:error, _} -> false
-      end
-    else
-      false
-    end
+    Enum.all?([root | chain], &match?({:ok, _certificate}, parse(&1))) and
+      path_valid?(root, Enum.reverse(chain))
   end
 
-  defp certificate?(der), do: match?({:ok, _certificate}, X509.Certificate.from_der(der))
+  @doc false
+  # Parses one DER-encoded certificate, `{:ok, certificate}` or `:error`,
+  # for `trusted?/2` and `AppAttest.Attestation` alike. The DER is untrusted
+  # input straight from a device, and OTP's ASN.1 decoder signals damage
+  # with raises, exits and throws of many kinds (`X509.Certificate.from_der/1`
+  # turns only a `MatchError` into an error tuple), so every kind is caught:
+  # any failure to decode is a malformed certificate, never a crash (#16).
+  @spec parse(der()) :: {:ok, X509.Certificate.t()} | :error
+  def parse(der) do
+    case X509.Certificate.from_der(der) do
+      {:ok, certificate} -> {:ok, certificate}
+      {:error, _reason} -> :error
+    end
+  catch
+    _kind, _reason -> :error
+  end
+
+  # A certificate that parses can still be damaged where only path
+  # validation looks (its validity times, its extensions), and OTP's
+  # `pkix_path_validation/3` then raises or exits instead of returning an
+  # error, for the same reason `parse/1` catches every kind (#16).
+  defp path_valid?(root, path) do
+    case :public_key.pkix_path_validation(root, path, verify_fun: {&accept_expired/3, []}) do
+      {:ok, _} -> true
+      {:error, _} -> false
+    end
+  catch
+    _kind, _reason -> false
+  end
 
   # Chain validation is otherwise OTP's own PKIX rules (RFC 5280); only the
   # expiry check is relaxed, for the reason `trusted?/2` documents above.
