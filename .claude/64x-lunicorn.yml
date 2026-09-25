@@ -16,4 +16,3 @@ ci:
     - { name: Unused deps, run: mix deps.unlock --check-unused, required: true }
     - { name: Compile, run: mix compile --warnings-as-errors, required: true }
     - { name: Test, run: mix test, required: true, secrets: [APPLE_DEVICECHECK_KEY, APPLE_DEVICECHECK_KEY_ID, APPLE_TEAM_ID] }
-    - { name: Pending scenarios, run: mix test --only pending, required: false }

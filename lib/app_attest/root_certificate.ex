@@ -90,7 +90,8 @@ defmodule AppAttest.RootCertificate do
   @doc """
   Whether `chain` — a leaf-first list of DER-encoded certificates, as
   Apple's `x5c` array carries them, not including `root` itself — chains
-  to the trusted `root` certificate.
+  to the trusted `root` certificate. Junk in place of `root` or of any
+  certificate in `chain` is `false`, never a raise (#16).
 
   Certificate validity periods are not checked. App Attest's own leaf
   certificates are short-lived by design (Apple issues a fresh one per
@@ -102,12 +103,41 @@ defmodule AppAttest.RootCertificate do
   """
   @spec trusted?(der(), [der(), ...]) :: boolean()
   def trusted?(root, [_ | _] = chain) when is_binary(root) do
-    path = Enum.reverse(chain)
+    # OTP's path validation raises on anything that is not a DER
+    # certificate, so `root` and every certificate of `chain` are parsed
+    # first: junk anywhere means no trusted chain, never a crash (#16).
+    Enum.all?([root | chain], &match?({:ok, _certificate}, parse(&1))) and
+      path_valid?(root, Enum.reverse(chain))
+  end
 
+  @doc false
+  # Parses one DER-encoded certificate, `{:ok, certificate}` or `:error`,
+  # for `trusted?/2` and `AppAttest.Attestation` alike. The DER is untrusted
+  # input straight from a device, and OTP's ASN.1 decoder signals damage
+  # with raises, exits and throws of many kinds (`X509.Certificate.from_der/1`
+  # turns only a `MatchError` into an error tuple), so every kind is caught:
+  # any failure to decode is a malformed certificate, never a crash (#16).
+  @spec parse(der()) :: {:ok, X509.Certificate.t()} | :error
+  def parse(der) do
+    case X509.Certificate.from_der(der) do
+      {:ok, certificate} -> {:ok, certificate}
+      {:error, _reason} -> :error
+    end
+  catch
+    _kind, _reason -> :error
+  end
+
+  # A certificate that parses can still be damaged where only path
+  # validation looks (its validity times, its extensions), and OTP's
+  # `pkix_path_validation/3` then raises or exits instead of returning an
+  # error, for the same reason `parse/1` catches every kind (#16).
+  defp path_valid?(root, path) do
     case :public_key.pkix_path_validation(root, path, verify_fun: {&accept_expired/3, []}) do
       {:ok, _} -> true
       {:error, _} -> false
     end
+  catch
+    _kind, _reason -> false
   end
 
   # Chain validation is otherwise OTP's own PKIX rules (RFC 5280); only the

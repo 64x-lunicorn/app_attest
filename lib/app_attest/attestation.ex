@@ -24,11 +24,13 @@ defmodule AppAttest.Attestation do
     `apple-appattest` attestation object: not well-formed CBOR at all, a
     different `fmt`, a missing `attStmt` or `authData`, an `authData` that
     is not a CBOR byte string, an empty or missing `x5c` certificate chain,
-    junk in place of a certificate, or a missing `receipt` or one that is
+    junk in place of any certificate of that chain, or a missing `receipt` or one that is
     not a CBOR byte string (#11). Which CBOR decoding failure it was
     is deliberately not told apart, so no atom of the `cbor` package
     reaches a caller (#10).
-  * `:untrusted_root` - the certificate chain does not lead to `root`.
+  * `:untrusted_root` - the certificate chain does not lead to `root`,
+    including a `root` that is not a DER certificate at all (#16): no chain
+    leads to it.
   * `:nonce_mismatch` - the nonce does not match `challenge`.
   * `:key_id_mismatch` - `key_id` does not identify this Attestation's key:
     the SHA-256 of the credential certificate's public key, or the
@@ -102,7 +104,7 @@ defmodule AppAttest.Attestation do
   def validate(attestation_object, key_id, challenge, app_id, root, expected_environment) do
     with {:ok, %{auth_data: auth_data, chain: chain, receipt: receipt}} <-
            Envelope.decode_attestation(attestation_object),
-         {:ok, leaf} <- leaf_certificate(chain),
+         {:ok, leaf} <- parse_chain(chain),
          :ok <- check_trusted_chain(root, chain),
          :ok <- check_nonce(leaf, auth_data, challenge),
          {:ok, key_id_bytes} <- check_public_key_hash(leaf, key_id),
@@ -122,11 +124,16 @@ defmodule AppAttest.Attestation do
     end
   end
 
-  defp leaf_certificate([leaf_der | _rest_of_chain]) do
-    case X509.Certificate.from_der(leaf_der) do
-      {:ok, leaf} -> {:ok, leaf}
-      {:error, _malformed} -> {:error, :invalid_attestation}
-    end
+  # Every certificate of the chain is parsed before path validation, not
+  # only the leaf: junk in place of an intermediate is a malformed
+  # Attestation, rejected here rather than raised on inside OTP's path
+  # validation (#16). Returns the parsed leaf.
+  defp parse_chain([_leaf_der | _rest_of_chain] = chain) do
+    [leaf | _rest] = parsed = Enum.map(chain, &RootCertificate.parse/1)
+
+    if Enum.all?(parsed, &match?({:ok, _certificate}, &1)),
+      do: leaf,
+      else: {:error, :invalid_attestation}
   end
 
   defp check_trusted_chain(root, chain) do
