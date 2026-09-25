@@ -34,14 +34,14 @@ defmodule AppAttest.RootCertificate do
 
   # Apple's own general-purpose "Apple Root CA - G3", published at
   # https://www.apple.com/certificateauthority/AppleRootCA-G3.cer.
-  # App Attest *receipts* (the Risk metric) are verified against this
-  # root, not `default/0`'s own App Attest-specific one, on the strength of
-  # takimoto3/app-attest's bundled `AppleRootCA-G3.cer` alone. Which root a
-  # receipt really chains to is still open (64x-lunicorn/Corridor#171,
-  # 64x-lunicorn/Corridor#174): Apple's own
-  # "Assessing fraud risk" documentation names the App Attest root instead,
-  # and no real Apple receipt has been verified against either root yet.
-  # Corridor's first TestFlight round settles it.
+  # App Attest Receipts are verified against this root, not `default/0`'s
+  # own App Attest-specific one. Verified on the real, Apple-issued Receipt
+  # inside the fixture Attestation (64x-lunicorn/app_attest#23,
+  # `AppAttest.ReceiptTest`): its chain runs Application Attestation Fraud
+  # Receipt Signing -> Apple Application Integration CA 5 - G1 -> Apple Root
+  # CA - G3, and it verifies against this root and not against `default/0`.
+  # This settles the root question 64x-lunicorn/Corridor#171 and
+  # 64x-lunicorn/Corridor#174 left open.
   @apple_root_ca_g3_pem """
   -----BEGIN CERTIFICATE-----
   MIICQzCCAcmgAwIBAgIILcX8iNLFS5UwCgYIKoZIzj0EAwMwZzEbMBkGA1UEAwwS
@@ -75,12 +75,10 @@ defmodule AppAttest.RootCertificate do
 
   @doc """
   Apple's real, compiled-in "Apple Root CA - G3" certificate, DER-encoded:
-  the root this library currently trusts for an App Attest receipt's own
-  signature (`AppAttest.RiskMetric`), never for an Attestation's or
-  Assertion's own chain (`default/0`). Whether a real Apple receipt chains
-  to it, or to the App Attest root Apple's own documentation names, is
-  still open until a real receipt has been verified
-  (64x-lunicorn/Corridor#171, 64x-lunicorn/Corridor#174).
+  the root an App Attest Receipt chains to (`AppAttest.Receipt`), never
+  the root of an Attestation's or Assertion's own chain (`default/0`). A
+  real, Apple-issued Receipt verifies against it and not against
+  `default/0` (`AppAttest.ReceiptTest`).
   """
   @spec apple_root_ca_g3() :: der()
   def apple_root_ca_g3 do

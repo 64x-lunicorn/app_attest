@@ -14,4 +14,4 @@ The words this project uses with one fixed meaning, one paragraph each. Code, is
 
 **Key ID**: The name a device gives its own App Attest key, derived from the key itself, so a key can only be recorded under the one name it yields.
 
-**Receipt**: Apple's signed record of a device's attested key, first issued inside the Attestation and exchanged for a fresh one each time the Risk metric is read.
+**Receipt**: Apple's signed record of a device's attested key, of one of two types: `ATTEST`, issued inside the Attestation, and `RECEIPT`, issued in exchange for the previous Receipt each time the Risk metric is read; only a `RECEIPT` carries the Risk metric.

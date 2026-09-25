@@ -15,30 +15,26 @@ defmodule AppAttest.RiskMetric do
   receipt for the caller to store on its Device in place of the one it
   sent; it persists nothing on its own.
 
-  A receipt's signature is verified against Apple's general-purpose "Apple
-  Root CA - G3" (`AppAttest.RootCertificate.apple_root_ca_g3/0`), not the
-  App Attest-specific root an Attestation's own chain uses
-  (`AppAttest.RootCertificate.default/0`). Which of the two a real Apple
-  receipt chains to is still open (64x-lunicorn/Corridor#171,
-  64x-lunicorn/Corridor#174) until one has been verified
-  in Corridor's first TestFlight round; `root` stays an explicit parameter
-  either way.
+  The new receipt is verified and read by `AppAttest.Receipt.verify/2`
+  against Apple's general-purpose "Apple Root CA - G3"
+  (`AppAttest.RootCertificate.apple_root_ca_g3/0`), not the App
+  Attest-specific root an Attestation's own chain uses
+  (`AppAttest.RootCertificate.default/0`): the real, Apple-issued Receipt
+  inside the fixture Attestation chains to Apple Root CA - G3 and not to
+  the App Attest root (`AppAttest.ReceiptTest`,
+  64x-lunicorn/app_attest#23). `root` stays an explicit parameter all the
+  same. Only a Receipt of type `RECEIPT` carrying the risk metric and both
+  validity dates answers this request; any other verified Receipt is
+  `:invalid_receipt`.
 
   Each receipt carries its own validity window, which `fetch/5` returns
   alongside the risk metric: Apple answers a refresh sent before a
   receipt's Not Before date with `304 Not Modified`, and may not honour one
   sent after its Expiration Time, so a caller schedules the next `fetch/5`
   between the two.
-
-  The receipt is a PKCS#7/CMS SignedData structure (RFC 5652). No Hex
-  package parses one, but `:public_key`'s `der_decode/2` and `der_encode/2`
-  already dispatch `'ContentInfo'`, `'SignedData'`, `'SignerInfo'` and
-  `'IssuerAndSerialNumber'` to a compiled-in RFC 5652 ASN.1 module, so only
-  Apple's own proprietary attribute list inside the envelope — which no
-  ASN.1 module describes — is parsed by hand here.
   """
 
-  alias AppAttest.{AuthenticatorData, RootCertificate}
+  alias AppAttest.{AuthenticatorData, Receipt, RootCertificate}
 
   @typedoc """
   The Apple DeviceCheck key that authenticates this request to Apple: an
@@ -81,7 +77,8 @@ defmodule AppAttest.RiskMetric do
   * `:untrusted_receipt` - the receipt's signature, or its certificate
     chain against `root`, does not verify.
   * `:invalid_receipt` - Apple's response is not base64, or not a
-    well-formed CMS-signed receipt carrying a risk metric.
+    well-formed CMS-signed receipt of type `RECEIPT` carrying a risk metric
+    and both validity dates.
   * `{:apple_error, status, body}` - Apple's server answered with a status
     other than 200 (its own documented codes: 304, 400, 401, 404, 429, 500,
     503 — see "Assessing fraud risk").
@@ -105,20 +102,6 @@ defmodule AppAttest.RiskMetric do
   @development_host ~c"https://data-development.appattest.apple.com"
   @path ~c"/v1/attestationData"
 
-  # RFC 5652 pkcs7-signedData, and the one digest algorithm Apple's receipts
-  # and the DeviceCheck JWT both use (confirmed: takimoto3/app-attest's
-  # receipt fixtures and the APNs-style provider token procedure are SHA-256
-  # throughout).
-  @signed_data_oid {1, 2, 840, 113_549, 1, 7, 2}
-  @sha256_oid {2, 16, 840, 1, 101, 3, 4, 2, 1}
-
-  # Apple's own receipt attribute numbers ("Assessing fraud risk"): the risk
-  # metric itself, and the two dates that bound when a refresh is worth
-  # sending at all.
-  @risk_metric_field 17
-  @not_before_field 19
-  @expiration_time_field 21
-
   # RFC 7518 section 3.4: JWS ES256 wants the signature as a fixed-width
   # r||s pair, one P-256 field element (32 bytes) each.
   @p256_coordinate_size 32
@@ -126,11 +109,9 @@ defmodule AppAttest.RiskMetric do
   @doc """
   Sends `receipt` (the device's current one) to Apple's risk-metric
   endpoint for `environment`, authenticated with `device_check_key`, and
-  verifies the new receipt Apple returns against `root` — currently
-  `AppAttest.RootCertificate.apple_root_ca_g3/0` in production, pending the
-  open root question (64x-lunicorn/Corridor#171,
-  64x-lunicorn/Corridor#174); a test
-  substitutes its own, the same way `AppAttest.Attestation.validate/6`
+  verifies the new receipt Apple returns against `root` —
+  `AppAttest.RootCertificate.apple_root_ca_g3/0` in production, the root a
+  real Apple Receipt chains to; a test substitutes its own, the same way `AppAttest.Attestation.validate/6`
   takes its own root explicitly.
 
   `opts[:transport]` replaces the real HTTP call to Apple with a stand-in,
@@ -162,8 +143,8 @@ defmodule AppAttest.RiskMetric do
     case transport.(request) do
       {:ok, 200, body} ->
         with {:ok, new_receipt} <- decode_base64(body),
-             {:ok, fields} <- verify_and_extract(new_receipt, root) do
-          {:ok, Map.put(fields, :receipt, new_receipt)}
+             {:ok, verified} <- Receipt.verify(new_receipt, root) do
+          risk_metric_fields(verified, new_receipt)
         end
 
       {:ok, status, body} ->
@@ -173,6 +154,25 @@ defmodule AppAttest.RiskMetric do
         {:error, {:transport_error, reason}}
     end
   end
+
+  # Only a `RECEIPT` (the type the risk-metric endpoint issues) carrying the
+  # risk metric and its Not Before date is an answer to this request; an
+  # `ATTEST` Receipt or one missing either field is not.
+  defp risk_metric_fields(
+         %Receipt{type: :receipt, risk_metric: risk_metric, not_before: not_before} = verified,
+         new_receipt
+       )
+       when is_integer(risk_metric) and not is_nil(not_before) do
+    {:ok,
+     %{
+       risk_metric: risk_metric,
+       receipt: new_receipt,
+       not_before: not_before,
+       expiration_time: verified.expiration_time
+     }}
+  end
+
+  defp risk_metric_fields(_other_receipt, _new_receipt), do: {:error, :invalid_receipt}
 
   defp host(:development), do: @development_host
   defp host(:production), do: @production_host
@@ -248,189 +248,4 @@ defmodule AppAttest.RiskMetric do
     bytes = :binary.encode_unsigned(integer)
     :binary.copy(<<0>>, @p256_coordinate_size - byte_size(bytes)) <> bytes
   end
-
-  ## Receipt verification: signature and certificate chain first (a receipt
-  ## nothing has verified is not trustworthy enough to read a risk metric
-  ## from at all), only then the ASN.1 attribute list. Signed attributes
-  ## (RFC 5652 section 5.4) are out of scope: the receipts of the reference
-  ## implementation takimoto3/app-attest sign the content directly with
-  ## none.
-
-  defp verify_and_extract(receipt_der, root) do
-    with {:ok, @signed_data_oid, signed_data} <- decode_content_info(receipt_der),
-         {:SignedData, _version, _digest_algorithms, encap_content_info, certificates, _crls,
-          [signer_info]} <- signed_data,
-         {:EncapsulatedContentInfo, _content_type, econtent} <- encap_content_info,
-         {:SignerInfo, _version, signer_id, digest_algorithm, :asn1_NOVALUE, _signature_algorithm,
-          signature, _unsigned_attrs} <- signer_info,
-         {:ok, :sha256} <- digest_type(digest_algorithm),
-         {:ok, chain} <- signer_chain(signer_id, certificates),
-         true <- RootCertificate.trusted?(root, chain),
-         signer_public_key = leaf_public_key(chain),
-         true <- :public_key.verify(econtent, :sha256, signature, signer_public_key),
-         {:ok, attributes} <- parse_attributes(econtent) do
-      extract_fields(attributes)
-    else
-      false -> {:error, :untrusted_receipt}
-      :error -> {:error, :invalid_receipt}
-      {:error, _reason} = error -> error
-      _malformed -> {:error, :invalid_receipt}
-    end
-  end
-
-  defp extract_fields(attributes) do
-    with {:ok, risk_metric} <- field(attributes, @risk_metric_field),
-         {:ok, risk_metric} <- integer_value(risk_metric),
-         {:ok, not_before} <- field(attributes, @not_before_field),
-         {:ok, not_before} <- timestamp_value(not_before),
-         {:ok, expiration_time} <- field(attributes, @expiration_time_field),
-         {:ok, expiration_time} <- timestamp_value(expiration_time) do
-      {:ok, %{risk_metric: risk_metric, not_before: not_before, expiration_time: expiration_time}}
-    end
-  end
-
-  defp field(attributes, number) do
-    case Map.fetch(attributes, number) do
-      {:ok, value} -> {:ok, value}
-      :error -> {:error, :invalid_receipt}
-    end
-  end
-
-  defp integer_value(value) do
-    case Integer.parse(value) do
-      {integer, ""} -> {:ok, integer}
-      _not_a_number -> {:error, :invalid_receipt}
-    end
-  end
-
-  # Apple's own receipt date fields carry an RFC 3339 timestamp as ASCII
-  # (confirmed against takimoto3/app-attest's own
-  # `fraud/receipt/receipt.go`, which parses the neighbouring Creation Time
-  # field the same way).
-  defp timestamp_value(value) do
-    case DateTime.from_iso8601(value) do
-      {:ok, timestamp, _utc_offset} -> {:ok, timestamp}
-      {:error, _reason} -> {:error, :invalid_receipt}
-    end
-  end
-
-  defp decode_content_info(der) do
-    case :public_key.der_decode(:ContentInfo, der) do
-      {:ContentInfo, content_type, content} -> {:ok, content_type, content}
-    end
-  rescue
-    _ -> {:error, :invalid_receipt}
-  end
-
-  defp digest_type({:DigestAlgorithmIdentifier, @sha256_oid, _params}), do: {:ok, :sha256}
-  defp digest_type(_other), do: {:error, :invalid_receipt}
-
-  # `certificates` (RFC 5652's `CertificateSet`) already comes back fully
-  # decoded from `decode_content_info/1`, as `{:certificate, cert_record}`
-  # per entry; matching `signerInfo`'s own `issuerAndSerialNumber` against
-  # each is what correctly finds the signer regardless of how Apple orders
-  # the set, rather than assuming it is always first.
-  defp signer_chain({:issuerAndSerialNumber, {:IssuerAndSerialNumber, issuer, serial}}, certs) do
-    ders =
-      Enum.map(certs, fn {:certificate, cert} -> :public_key.der_encode(:Certificate, cert) end)
-
-    case Enum.find(ders, &signed_by?(&1, issuer, serial)) do
-      nil -> {:error, :untrusted_receipt}
-      leaf_der -> {:ok, [leaf_der | List.delete(ders, leaf_der)]}
-    end
-  end
-
-  defp signer_chain(_other_sid, _certs), do: {:error, :invalid_receipt}
-
-  defp signed_by?(cert_der, issuer, serial) do
-    certificate = X509.Certificate.from_der!(cert_der)
-
-    X509.Certificate.issuer(certificate) == issuer and
-      X509.Certificate.serial(certificate) == serial
-  end
-
-  defp leaf_public_key([leaf_der | _rest]) do
-    leaf_der |> X509.Certificate.from_der!() |> X509.Certificate.public_key()
-  end
-
-  # Apple's own receipt payload (`eContent`), undocumented by any ASN.1
-  # module: `SET OF SEQUENCE { type INTEGER, version INTEGER, value OCTET
-  # STRING }` ("Assessing fraud risk"; confirmed structurally against the
-  # reference implementation takimoto3/app-attest's
-  # `fraud/receipt/receipt.go`). Every field this module does not need
-  # still has to be walked past correctly to reach the ones after it, so
-  # this parses every attribute present, keyed by its own field number,
-  # rather than searching only for field 17.
-  #
-  # Every parser below has a catch-all clause and returns
-  # `{:error, :invalid_receipt}` rather than raising: a receipt's signature
-  # and certificate chain say nothing about whether the bytes inside parse,
-  # so a correctly signed receipt whose payload is truncated still has to
-  # come back out of `fetch/5` as the documented rejection.
-
-  defp parse_attributes(<<0x31, rest::binary>>) do
-    with {:ok, length, rest} <- der_length(rest),
-         <<attributes::binary-size(^length), _extra::binary>> <- rest do
-      parse_attribute_list(attributes, %{})
-    else
-      _malformed -> {:error, :invalid_receipt}
-    end
-  end
-
-  defp parse_attributes(_malformed), do: {:error, :invalid_receipt}
-
-  defp parse_attribute_list(<<>>, attributes), do: {:ok, attributes}
-
-  defp parse_attribute_list(<<0x30, rest::binary>>, attributes) do
-    with {:ok, length, rest} <- der_length(rest),
-         <<sequence::binary-size(^length), remaining::binary>> <- rest,
-         {:ok, field, value} <- parse_attribute(sequence) do
-      parse_attribute_list(remaining, Map.put(attributes, field, value))
-    else
-      _malformed -> {:error, :invalid_receipt}
-    end
-  end
-
-  defp parse_attribute_list(_malformed, _attributes), do: {:error, :invalid_receipt}
-
-  defp parse_attribute(<<0x02, rest::binary>>) do
-    with {:ok, field, rest} <- der_integer(rest),
-         <<0x02, rest::binary>> <- rest,
-         {:ok, _version, rest} <- der_integer(rest),
-         <<0x04, rest::binary>> <- rest,
-         {:ok, length, rest} <- der_length(rest),
-         <<value::binary-size(^length), _rest::binary>> <- rest do
-      {:ok, field, value}
-    else
-      _malformed -> {:error, :invalid_receipt}
-    end
-  end
-
-  defp parse_attribute(_malformed), do: {:error, :invalid_receipt}
-
-  defp der_integer(data) do
-    with {:ok, length, rest} <- der_length(data),
-         <<value::big-unsigned-integer-size(^length)-unit(8), remaining::binary>> <- rest do
-      {:ok, value, remaining}
-    else
-      _malformed -> {:error, :invalid_receipt}
-    end
-  end
-
-  # DER length octets: short form (top bit clear) is the length itself;
-  # long form (top bit set) gives, in its low 7 bits, how many following
-  # bytes hold the length as a big-endian integer.
-  defp der_length(<<0::1, short_form::7, rest::binary>>), do: {:ok, short_form, rest}
-
-  defp der_length(<<1::1, byte_count::7, rest::binary>>) do
-    case rest do
-      <<length::big-unsigned-integer-size(^byte_count)-unit(8), remaining::binary>> ->
-        {:ok, length, remaining}
-
-      _malformed ->
-        {:error, :invalid_receipt}
-    end
-  end
-
-  defp der_length(_malformed), do: {:error, :invalid_receipt}
 end

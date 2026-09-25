@@ -32,7 +32,7 @@ defmodule AppAttest.Fixtures do
   @bundle_identifier "io.uebelacker.AppAttestExample"
 
   # Apple's own receipt attribute numbers ("Assessing fraud risk", the same
-  # table `AppAttest.RiskMetric` reads). Field 6 ("Receipt Type") is always
+  # table `AppAttest.Receipt` reads). Field 6 ("Receipt Type") is always
   # "RECEIPT" for a receipt fetched from the risk-metric endpoint, never
   # "ATTEST" (the value the one accompanying an Attestation object carries).
   @receipt_type_field 6
@@ -153,12 +153,13 @@ defmodule AppAttest.Fixtures do
 
   @doc """
   A throwaway root and leaf certificate pair standing in for a receipt's
-  real chain to the root `AppAttest.RiskMetric` trusts in production
+  real chain to Apple Root CA - G3
   (`AppAttest.RootCertificate.apple_root_ca_g3/0`): `root` is the
-  substitute trusted root a test passes to `AppAttest.RiskMetric.fetch/5`
-  in place of the real one; `leaf` and `leaf_key` sign a receipt built by
-  `receipt/2`. Issued from one another rather than self-signed like
-  `untrusted_root/0`, because `AppAttest.RiskMetric` finds the signer
+  substitute trusted root a test passes to `AppAttest.Receipt.verify/2` or
+  `AppAttest.RiskMetric.fetch/5` in place of the real one; `leaf` and
+  `leaf_key` sign a receipt built by `receipt/2`. Issued from one another
+  rather than self-signed like `untrusted_root/0`, because
+  `AppAttest.Receipt` finds the signer
   among a receipt's own embedded certificates instead of assuming there is
   only one to check.
   """
@@ -208,7 +209,7 @@ defmodule AppAttest.Fixtures do
   @doc """
   A self-signed CMS/PKCS#7 receipt carrying `risk_metric` in Apple's
   own field 17, and validity dates in its fields 19 and 21
-  (`AppAttest.RiskMetric`'s own moduledoc), signed by `chain.leaf_key` over
+  (`AppAttest.Receipt`'s own moduledoc), signed by `chain.leaf_key` over
   `chain.leaf` (`risk_metric_chain/0`). `receipt_not_before/0` and
   `receipt_expiration_time/0` are the two dates it carries.
   """
@@ -239,7 +240,7 @@ defmodule AppAttest.Fixtures do
   No PKCS#7/CMS-signing Hex package exists to build this with, and shelling
   out to `openssl cms` would need an OpenSSL the stock macOS LibreSSL does
   not provide. `:public_key`'s own `der_encode/2` dispatches `'ContentInfo'`
-  to the same compiled-in RFC 5652 ASN.1 module that `AppAttest.RiskMetric`
+  to the same compiled-in RFC 5652 ASN.1 module that `AppAttest.Receipt`
   already decodes receipts with, so the envelope is built with that instead
   — no external tool, no temporary files.
   """

@@ -33,6 +33,7 @@ app_attest checks that the requests reaching your server come from a genuine, un
 | **Assertion validation** | Checks the signature against the public key stored in the Device, the App ID hash and a Counter strictly greater than the stored one, so a captured Assertion cannot be replayed. |
 | **Development and production kept apart** | Records the environment a device attested in and rejects Attestations and Assertions from the other one. |
 | **Risk metric** | Fetches Apple's per-device Risk metric and verifies its Receipt; informational only, never a reason to accept or reject. |
+| **Receipt reading** | Verifies any Receipt against Apple Root CA - G3 and reads its type, Risk metric, Not Before and expiration time. |
 | **No state of its own** | You pass in what you stored and get back what changed; storage stays in your server. |
 
 > [!NOTE]

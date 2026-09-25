@@ -30,11 +30,15 @@ defmodule AppAttest.RiskMetricAppleTest do
   receipt, but issued to a foreign team and long expired, so Apple answers
   it with `400`. A `200` needs a receipt from a device running Corridor's
   own app under this Team ID, which does not exist until Corridor ships to
-  TestFlight. Until then the whole receipt-parsing half of
-  `AppAttest.RiskMetric` — the CMS envelope, the chain to Apple Root CA -
-  G3, Apple's own attribute list — is exercised only against the
-  self-generated receipts in `AppAttest.Fixtures`, never against one Apple
-  actually signed.
+  TestFlight. The receipt-reading half itself is proven on real bytes
+  elsewhere: `AppAttest.ReceiptTest` verifies that same Apple-issued
+  `ATTEST` Receipt — its CMS envelope, its chain to Apple Root CA - G3 (and
+  not to the App Attest root), Apple's own attribute list — which settles
+  the root question 64x-lunicorn/Corridor#171 and 64x-lunicorn/Corridor#174
+  left open. What no real bytes prove yet is a `RECEIPT`-type Receipt, the
+  only type carrying a risk metric and a Not Before date: those fields are
+  exercised only against the self-generated receipts in `AppAttest.Fixtures`
+  (64x-lunicorn/app_attest#20).
 
   Tagged `:apple_endpoint`, which `test_helper.exs` excludes unless
   `AppAttest.AppleCredentials.available?/0` — a clone without an Apple
