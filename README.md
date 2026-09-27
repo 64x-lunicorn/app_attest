@@ -11,6 +11,7 @@
 <p>
 <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-22c55e?style=flat-square" alt="License: Apache-2.0"></a>
 <a href="mix.exs"><img src="https://img.shields.io/badge/built_with-Elixir-6e4a7e?style=flat-square" alt="Built with Elixir"></a>
+<a href="https://scorecard.dev/viewer/?uri=github.com/64x-lunicorn/app_attest"><img src="https://api.scorecard.dev/projects/github.com/64x-lunicorn/app_attest/badge?style=flat-square" alt="OpenSSF Scorecard"></a>
 </p>
 
 <p>
