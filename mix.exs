@@ -58,7 +58,7 @@ defmodule AppAttest.MixProject do
       # `mix ci` builds the docs in the test env, which also compiles
       # test/support; its helpers are not part of the library.
       filter_modules: fn _module, %{source_path: path} ->
-        not String.contains?(to_string(path), "/test/support/")
+        not String.starts_with?(to_string(path), Path.expand("test/support"))
       end
     ]
   end
