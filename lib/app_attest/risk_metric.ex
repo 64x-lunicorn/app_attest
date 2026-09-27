@@ -33,7 +33,7 @@ defmodule AppAttest.RiskMetric do
   between the two.
   """
 
-  alias AppAttest.{Device, Receipt, Trust}
+  alias AppAttest.{Device, DeviceCheckToken, Receipt, Trust}
 
   @typedoc """
   The Apple DeviceCheck key that authenticates this request to Apple: an
@@ -103,10 +103,6 @@ defmodule AppAttest.RiskMetric do
   @development_host ~c"https://data-development.appattest.apple.com"
   @path ~c"/v1/attestationData"
 
-  # RFC 7518 section 3.4: JWS ES256 wants the signature as a fixed-width
-  # r||s pair, one P-256 field element (32 bytes) each.
-  @p256_coordinate_size 32
-
   @doc """
   Sends `device`'s current `receipt` to Apple's risk-metric endpoint for
   its `environment`, authenticated with `device_check_key`, and
@@ -142,7 +138,7 @@ defmodule AppAttest.RiskMetric do
 
     request = %{
       url: host(environment) ++ @path,
-      authorization: jwt(device_check_key),
+      authorization: DeviceCheckToken.build(device_check_key, System.system_time(:second)),
       body: Base.encode64(receipt)
     }
 
@@ -225,45 +221,5 @@ defmodule AppAttest.RiskMetric do
       {:error, reason} ->
         {:error, reason}
     end
-  end
-
-  ## JWT (APNs-style provider token): Apple's own "Assessing fraud risk"
-  ## guide points to the identical Apple Push Notification service token
-  ## procedure — ES256, header `{alg, kid}`, claims `{iss, iat}` — confirmed
-  ## against the reference implementation takimoto3/appleapi-core's `token`
-  ## package for the header and claim shape. The `kid` is the DeviceCheck
-  ## key identifier, not a device's Key ID.
-
-  defp jwt(%{key_id: key_id, team_id: team_id, private_key: private_key}) do
-    header = json_base64(%{"alg" => "ES256", "kid" => key_id})
-    claims = json_base64(%{"iss" => team_id, "iat" => System.system_time(:second)})
-    signing_input = header <> "." <> claims
-
-    signature =
-      signing_input
-      |> :public_key.sign(:sha256, private_key)
-      |> der_signature_to_raw()
-      |> Base.url_encode64(padding: false)
-
-    signing_input <> "." <> signature
-  end
-
-  defp json_base64(map) do
-    map |> :json.encode() |> IO.iodata_to_binary() |> Base.url_encode64(padding: false)
-  end
-
-  # :public_key.sign/3 returns a DER `Dss-Sig-Value` SEQUENCE{r, s} (the
-  # same structure DSA and ECDSA signatures both use); JWS ES256 wants the
-  # raw, fixed-width pair instead (RFC 7518 section 3.4) — the same
-  # conversion the reference implementation takimoto3/appleapi-core's
-  # `SignerECDSA.Sign` performs by hand.
-  defp der_signature_to_raw(der_signature) do
-    {:"Dss-Sig-Value", r, s} = :public_key.der_decode(:"Dss-Sig-Value", der_signature)
-    pad_to_coordinate_size(r) <> pad_to_coordinate_size(s)
-  end
-
-  defp pad_to_coordinate_size(integer) do
-    bytes = :binary.encode_unsigned(integer)
-    :binary.copy(<<0>>, @p256_coordinate_size - byte_size(bytes)) <> bytes
   end
 end
