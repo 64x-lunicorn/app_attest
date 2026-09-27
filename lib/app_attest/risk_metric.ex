@@ -50,7 +50,7 @@ defmodule AppAttest.RiskMetric do
   @type device_check_key :: %{
           key_id: String.t(),
           team_id: String.t(),
-          private_key: X509.PrivateKey.t()
+          private_key: :public_key.ecdsa_private_key()
         }
 
   @typedoc """

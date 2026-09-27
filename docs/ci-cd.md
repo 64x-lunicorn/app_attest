@@ -12,6 +12,12 @@ Every pull request into `main` runs these checks. The only required status check
 | Unused deps | `mix deps.unlock --check-unused` | yes |
 | Compile | `mix compile --warnings-as-errors` | yes |
 | Test | `mix test` | yes |
+| Docs | `mix docs --warnings-as-errors` | yes |
+| Hex package | `mix hex.build` | yes |
+| Credo | `mix credo --strict` | yes |
+| Dialyzer | `mix dialyzer` | yes |
+| Hex audit | `mix hex.audit` | yes |
+| Dependency audit | `mix deps.audit` | yes |
 | Workflow lint | actionlint on `.github/workflows`, zizmor on `.github` | yes |
 | Secret scan | gitleaks over the full history | yes |
 

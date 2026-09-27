@@ -1,21 +1,25 @@
 <div align="center">
 
-# app_attest
+<h1>app_attest</h1>
 
 <img src="docs/assets/app_attest-banner.svg" alt="app_attest - Apple App Attest validation for Elixir servers" width="1200">
 
-### Apple App Attest validation for Elixir servers.
+<h3>Apple App Attest validation for Elixir servers.</h3>
 
-Elixir library validating Apple's App Attest attestations and assertions, built for Corridor's own server.
+<p>Elixir library validating Apple's App Attest attestations and assertions, built for Corridor's own server.</p>
 
-[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-22c55e?style=flat-square)](LICENSE)
-[![Built with Elixir](https://img.shields.io/badge/built_with-Elixir-6e4a7e?style=flat-square)](mix.exs)
+<p>
+<a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-22c55e?style=flat-square" alt="License: Apache-2.0"></a>
+<a href="mix.exs"><img src="https://img.shields.io/badge/built_with-Elixir-6e4a7e?style=flat-square" alt="Built with Elixir"></a>
+</p>
 
-[How it works](#how-it-works) &nbsp; / &nbsp;
-[Quickstart](#quickstart) &nbsp; / &nbsp;
-[Where the design lives](#where-the-design-lives) &nbsp; / &nbsp;
-[Contributing](CONTRIBUTING.md) &nbsp; / &nbsp;
-[Report a bug](https://github.com/64x-lunicorn/app_attest/issues)
+<p>
+<a href="#how-it-works">How it works</a> &nbsp; / &nbsp;
+<a href="#quickstart">Quickstart</a> &nbsp; / &nbsp;
+<a href="#where-the-design-lives">Where the design lives</a> &nbsp; / &nbsp;
+<a href="https://github.com/64x-lunicorn/app_attest/blob/main/CONTRIBUTING.md">Contributing</a> &nbsp; / &nbsp;
+<a href="https://github.com/64x-lunicorn/app_attest/issues">Report a bug</a>
+</p>
 
 </div>
 
@@ -105,9 +109,9 @@ Everything about *what* this library does and *why* is tracked on `64x-lunicorn/
 | Guide | Start here when you want to... |
 | :--- | :--- |
 | [Terms](CONTEXT.md) | Look up what Attestation, Assertion, Counter, Risk metric, Device, Key ID and Receipt mean here. |
-| [CI/CD](docs/ci-cd.md) | Understand the gate, run it locally and see the rules on `main`. |
-| [Contributing](CONTRIBUTING.md) | Set up development, run the checks and submit a focused change. |
-| [Security policy](SECURITY.md) | Report a vulnerability privately. |
+| [CI/CD](https://github.com/64x-lunicorn/app_attest/blob/main/docs/ci-cd.md) | Understand the gate, run it locally and see the rules on `main`. |
+| [Contributing](https://github.com/64x-lunicorn/app_attest/blob/main/CONTRIBUTING.md) | Set up development, run the checks and submit a focused change. |
+| [Security policy](https://github.com/64x-lunicorn/app_attest/blob/main/SECURITY.md) | Report a vulnerability privately. |
 
 ## Contributing
 
@@ -119,7 +123,7 @@ mix ci
 
 New behaviour starts as a Spec and tickets in `64x-lunicorn/Corridor`.
 
-Use synthetic data in examples, tests and issues. See [CONTRIBUTING.md](CONTRIBUTING.md) for the checks and what a change needs.
+Use synthetic data in examples, tests and issues. See [CONTRIBUTING.md](https://github.com/64x-lunicorn/app_attest/blob/main/CONTRIBUTING.md) for the checks and what a change needs.
 
 ## License and credits
 

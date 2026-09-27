@@ -69,7 +69,7 @@ defmodule AppAttest.Fixtures do
   @signed_data_oid {1, 2, 840, 113_549, 1, 7, 2}
   @data_oid {1, 2, 840, 113_549, 1, 7, 1}
   @sha256_oid {2, 16, 840, 1, 101, 3, 4, 2, 1}
-  @ecdsa_with_sha256_oid {1, 2, 840, 10045, 4, 3, 2}
+  @ecdsa_with_sha256_oid {1, 2, 840, 10_045, 4, 3, 2}
 
   @doc "The raw, CBOR-encoded Attestation object, as Apple's SDK produced it."
   @spec attestation() :: binary()
@@ -154,7 +154,7 @@ defmodule AppAttest.Fixtures do
   The public key comes back the way an `AppAttest.Device` stores it: the
   DER-encoded SubjectPublicKeyInfo.
   """
-  @spec device_key_pair() :: {X509.PrivateKey.t(), binary()}
+  @spec device_key_pair() :: {:public_key.ecdsa_private_key(), binary()}
   def device_key_pair do
     private_key = X509.PrivateKey.new_ec(:secp256r1)
     {private_key, private_key |> X509.PublicKey.derive() |> X509.PublicKey.to_der()}
@@ -186,7 +186,13 @@ defmodule AppAttest.Fixtures do
   * `:signature` - in place of the genuine signature.
   * `:authenticator_data` - in place of the genuine authenticator data.
   """
-  @spec assertion(non_neg_integer(), String.t(), binary(), X509.PrivateKey.t(), keyword()) ::
+  @spec assertion(
+          non_neg_integer(),
+          String.t(),
+          binary(),
+          :public_key.ecdsa_private_key(),
+          keyword()
+        ) ::
           binary()
   def assertion(counter, app_id, client_data, private_key, opts \\ []) do
     auth_data = authenticator_data(app_id, counter: counter)
@@ -279,7 +285,7 @@ defmodule AppAttest.Fixtures do
           root: AppAttest.RootCertificate.der(),
           app_id: String.t(),
           challenge: binary(),
-          private_key: X509.PrivateKey.t()
+          private_key: :public_key.ecdsa_private_key()
         }
   def self_generated_attestation(opts \\ []) do
     app_id = Keyword.get(opts, :app_id, @self_generated_app_id)
@@ -341,7 +347,7 @@ defmodule AppAttest.Fixtures do
   of an Attestation or Assertion: the `cbor` package encodes a plain
   binary as a CBOR *text* string instead.
   """
-  @spec cbor_bytes(binary()) :: CBOR.Tag.t()
+  @spec cbor_bytes(binary()) :: %{__struct__: CBOR.Tag, tag: :bytes, value: binary()}
   def cbor_bytes(value), do: %CBOR.Tag{tag: :bytes, value: value}
 
   @doc """
@@ -382,7 +388,7 @@ defmodule AppAttest.Fixtures do
   @spec risk_metric_chain() :: %{
           root: AppAttest.RootCertificate.der(),
           leaf: AppAttest.RootCertificate.der(),
-          leaf_key: X509.PrivateKey.t()
+          leaf_key: :public_key.ecdsa_private_key()
         }
   def risk_metric_chain do
     root_key = X509.PrivateKey.new_ec(:secp256r1)
@@ -429,7 +435,8 @@ defmodule AppAttest.Fixtures do
   `chain.leaf` (`risk_metric_chain/0`). `receipt_not_before/0` and
   `receipt_expiration_time/0` are the two dates it carries.
   """
-  @spec receipt(non_neg_integer(), %{leaf: binary(), leaf_key: X509.PrivateKey.t()}) :: binary()
+  @spec receipt(non_neg_integer(), %{leaf: binary(), leaf_key: :public_key.ecdsa_private_key()}) ::
+          binary()
   def receipt(risk_metric, chain) do
     receipt_with_attributes(chain, [
       {@receipt_type_field, "RECEIPT"},
@@ -460,7 +467,7 @@ defmodule AppAttest.Fixtures do
   already decodes receipts with, so the envelope is built with that instead
   — no external tool, no temporary files.
   """
-  @spec receipt_with_attributes(%{leaf: binary(), leaf_key: X509.PrivateKey.t()}, [
+  @spec receipt_with_attributes(%{leaf: binary(), leaf_key: :public_key.ecdsa_private_key()}, [
           {non_neg_integer(), binary()}
         ]) :: binary()
   def receipt_with_attributes(chain, attributes) do
@@ -477,7 +484,10 @@ defmodule AppAttest.Fixtures do
   a well-formed attribute list at all inside an otherwise genuine,
   correctly signed receipt.
   """
-  @spec receipt_with_payload(%{leaf: binary(), leaf_key: X509.PrivateKey.t()}, binary()) ::
+  @spec receipt_with_payload(
+          %{leaf: binary(), leaf_key: :public_key.ecdsa_private_key()},
+          binary()
+        ) ::
           binary()
   def receipt_with_payload(%{leaf: leaf_der, leaf_key: leaf_key}, payload) do
     leaf = X509.Certificate.from_der!(leaf_der)
