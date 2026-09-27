@@ -50,6 +50,24 @@ jobs:
             run: "mix test"
             required: true
             secret_names: " APPLE_DEVICECHECK_KEY APPLE_DEVICECHECK_KEY_ID APPLE_TEAM_ID "
+          - name: "Docs"
+            run: "mix docs --warnings-as-errors"
+            required: true
+          - name: "Hex package"
+            run: "mix hex.build"
+            required: true
+          - name: "Credo"
+            run: "mix credo --strict"
+            required: true
+          - name: "Dialyzer"
+            run: "mix dialyzer"
+            required: true
+          - name: "Hex audit"
+            run: "mix hex.audit"
+            required: true
+          - name: "Dependency audit"
+            run: "mix deps.audit"
+            required: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
