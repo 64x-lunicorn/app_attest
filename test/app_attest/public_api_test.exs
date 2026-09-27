@@ -24,13 +24,14 @@ defmodule AppAttest.PublicApiTest do
   end
 
   describe "documented modules" do
-    test "are Attestation, Assertion, RiskMetric, Receipt, RootCertificate and Device only" do
+    test "are Attestation, Assertion, RiskMetric, Receipt, Trust, RootCertificate and Device only" do
       assert Enum.sort(documented_modules()) ==
                Enum.sort([
                  AppAttest.Attestation,
                  AppAttest.Assertion,
                  AppAttest.RiskMetric,
                  AppAttest.Receipt,
+                 AppAttest.Trust,
                  AppAttest.RootCertificate,
                  AppAttest.Device
                ])

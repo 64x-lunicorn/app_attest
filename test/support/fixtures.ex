@@ -243,8 +243,10 @@ defmodule AppAttest.Fixtures do
   * `:attestation` - the CBOR-encoded Attestation object.
   * `:key_id` - base64 SHA-256 of the leaf's public key in X9.62
     uncompressed point format, as Apple's SDK derives it.
-  * `:root` - the self-signed leaf itself, which doubles as the trusted
-    root, so only what a test deliberately varies can make it fail.
+  * `:trust` - an `AppAttest.Trust` whose App Attest root is the
+    self-signed leaf itself, doubling as the trusted root, so only what a
+    test deliberately varies can make it fail; its Receipt root is
+    Apple's real one.
   * `:app_id`, `:challenge` - the App ID and challenge it was built for.
   * `:private_key` - the attested key's private key, which only the device
     holds, to sign Assertions (`assertion/5`) for the Device this
@@ -282,7 +284,7 @@ defmodule AppAttest.Fixtures do
   @spec self_generated_attestation(keyword()) :: %{
           attestation: binary(),
           key_id: String.t(),
-          root: AppAttest.RootCertificate.der(),
+          trust: AppAttest.Trust.t(),
           app_id: String.t(),
           challenge: binary(),
           private_key: :public_key.ecdsa_private_key()
@@ -335,7 +337,7 @@ defmodule AppAttest.Fixtures do
     %{
       attestation: attestation,
       key_id: Base.encode64(key_id_bytes),
-      root: leaf_der,
+      trust: %AppAttest.Trust{AppAttest.Trust.apple() | app_attest_root: leaf_der},
       app_id: app_id,
       challenge: challenge,
       private_key: private_key
@@ -375,10 +377,11 @@ defmodule AppAttest.Fixtures do
 
   @doc """
   A throwaway root and leaf certificate pair standing in for a receipt's
-  real chain to Apple Root CA - G3
-  (`AppAttest.RootCertificate.apple_root_ca_g3/0`): `root` is the
-  substitute trusted root a test passes to `AppAttest.Receipt.verify/2` or
-  `AppAttest.RiskMetric.fetch/4` in place of the real one; `leaf` and
+  real chain to Apple Root CA - G3 (the Receipt root of
+  `AppAttest.Trust.apple/0`): `trust` is the mixed `AppAttest.Trust` a
+  test passes to `AppAttest.Receipt.verify/2` or
+  `AppAttest.RiskMetric.fetch/4`, Apple's real App Attest root beside the
+  throwaway root as its Receipt root; `leaf` and
   `leaf_key` sign a receipt built by `receipt/2`. Issued from one another
   rather than self-signed like `untrusted_root/0`, because
   `AppAttest.Receipt` finds the signer
@@ -386,7 +389,7 @@ defmodule AppAttest.Fixtures do
   only one to check.
   """
   @spec risk_metric_chain() :: %{
-          root: AppAttest.RootCertificate.der(),
+          trust: AppAttest.Trust.t(),
           leaf: AppAttest.RootCertificate.der(),
           leaf_key: :public_key.ecdsa_private_key()
         }
@@ -407,7 +410,10 @@ defmodule AppAttest.Fixtures do
       )
 
     %{
-      root: X509.Certificate.to_der(root_cert),
+      trust: %AppAttest.Trust{
+        AppAttest.Trust.apple()
+        | receipt_root: X509.Certificate.to_der(root_cert)
+      },
       leaf: X509.Certificate.to_der(leaf_cert),
       leaf_key: leaf_key
     }

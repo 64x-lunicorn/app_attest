@@ -10,14 +10,14 @@ defmodule AppAttest.IntegrationTest do
 
     * `AppAttest.Attestation.validate/6` - the raw, CBOR-encoded Attestation
       object Apple's SDK produces, its Key ID, the server's challenge, the
-      App ID, the trusted root and the environment the caller expects;
+      App ID, the `AppAttest.Trust` and the environment the caller expects;
       returns the `AppAttest.Device` the caller stores.
     * `AppAttest.Assertion.validate/5` - the raw, CBOR-encoded Assertion
       object, the `client_data` the device signed over, the App ID, the
       stored `AppAttest.Device` and the environment the caller expects;
       returns the Device with its Counter moved on.
     * `AppAttest.RiskMetric.fetch/4` - the stored `AppAttest.Device`, the
-      DeviceCheck key, the trusted root and an `opts[:transport]` seam
+      DeviceCheck key, the `AppAttest.Trust` and an `opts[:transport]` seam
       standing in for Apple's own endpoint; returns the Device with its
       Receipt moved on, alongside the risk metric.
 
@@ -72,7 +72,7 @@ defmodule AppAttest.IntegrationTest do
                  AppAttest.Fixtures.key_id(),
                  AppAttest.Fixtures.challenge(),
                  AppAttest.Fixtures.app_id(),
-                 AppAttest.RootCertificate.default(),
+                 AppAttest.Trust.apple(),
                  :development
                )
 
@@ -86,7 +86,10 @@ defmodule AppAttest.IntegrationTest do
                  AppAttest.Fixtures.key_id(),
                  AppAttest.Fixtures.challenge(),
                  AppAttest.Fixtures.app_id(),
-                 AppAttest.Fixtures.untrusted_root(),
+                 %AppAttest.Trust{
+                   AppAttest.Trust.apple()
+                   | app_attest_root: AppAttest.Fixtures.untrusted_root()
+                 },
                  :development
                )
     end
@@ -98,7 +101,7 @@ defmodule AppAttest.IntegrationTest do
                  AppAttest.Fixtures.key_id(),
                  "a-different-challenge",
                  AppAttest.Fixtures.app_id(),
-                 AppAttest.RootCertificate.default(),
+                 AppAttest.Trust.apple(),
                  :development
                )
     end
@@ -110,7 +113,7 @@ defmodule AppAttest.IntegrationTest do
                  AppAttest.Fixtures.key_id(),
                  AppAttest.Fixtures.challenge(),
                  "a-different-app-id-hash",
-                 AppAttest.RootCertificate.default(),
+                 AppAttest.Trust.apple(),
                  :development
                )
     end
@@ -122,7 +125,7 @@ defmodule AppAttest.IntegrationTest do
                  a_key_id_of_another_key(),
                  AppAttest.Fixtures.challenge(),
                  AppAttest.Fixtures.app_id(),
-                 AppAttest.RootCertificate.default(),
+                 AppAttest.Trust.apple(),
                  :development
                )
     end
@@ -214,7 +217,7 @@ defmodule AppAttest.IntegrationTest do
                  AppAttest.Fixtures.key_id(),
                  AppAttest.Fixtures.challenge(),
                  AppAttest.Fixtures.app_id(),
-                 AppAttest.RootCertificate.default(),
+                 AppAttest.Trust.apple(),
                  _expected_environment = :production
                )
     end
@@ -256,7 +259,7 @@ defmodule AppAttest.IntegrationTest do
                  attestation.key_id,
                  attestation.challenge,
                  @app_id,
-                 attestation.root,
+                 attestation.trust,
                  :development
                )
 
@@ -282,7 +285,7 @@ defmodule AppAttest.IntegrationTest do
                AppAttest.RiskMetric.fetch(
                  device,
                  AppAttest.Fixtures.device_check_key(),
-                 chain.root,
+                 chain.trust,
                  transport: transport
                )
 
@@ -319,7 +322,10 @@ defmodule AppAttest.IntegrationTest do
             AppAttest.Fixtures.key_id(),
             AppAttest.Fixtures.challenge(),
             AppAttest.Fixtures.app_id(),
-            AppAttest.Fixtures.untrusted_root(),
+            %AppAttest.Trust{
+              AppAttest.Trust.apple()
+              | app_attest_root: AppAttest.Fixtures.untrusted_root()
+            },
             :development
           ),
         nonce_mismatch:
@@ -328,7 +334,7 @@ defmodule AppAttest.IntegrationTest do
             AppAttest.Fixtures.key_id(),
             "a-different-challenge",
             AppAttest.Fixtures.app_id(),
-            AppAttest.RootCertificate.default(),
+            AppAttest.Trust.apple(),
             :development
           ),
         key_id_mismatch:
@@ -337,7 +343,7 @@ defmodule AppAttest.IntegrationTest do
             a_key_id_of_another_key(),
             AppAttest.Fixtures.challenge(),
             AppAttest.Fixtures.app_id(),
-            AppAttest.RootCertificate.default(),
+            AppAttest.Trust.apple(),
             :development
           ),
         app_id_mismatch:
@@ -346,7 +352,7 @@ defmodule AppAttest.IntegrationTest do
             AppAttest.Fixtures.key_id(),
             AppAttest.Fixtures.challenge(),
             "a-different-app-id-hash",
-            AppAttest.RootCertificate.default(),
+            AppAttest.Trust.apple(),
             :development
           ),
         counter_not_increasing:

@@ -16,20 +16,20 @@ defmodule AppAttest.Receipt do
 
   `AppAttest.Attestation.validate/6` hands its Receipt through unverified; a
   caller that wants that Receipt's Expiration Time calls `verify/2` on it
-  with `AppAttest.RootCertificate.apple_root_ca_g3/0` itself.
+  with `AppAttest.Trust.apple/0` itself.
 
   ## The trusted root
 
   A real Apple Receipt chains to Apple's general-purpose "Apple Root CA -
-  G3" (`AppAttest.RootCertificate.apple_root_ca_g3/0`), not to the App
-  Attest root an Attestation's own chain uses
-  (`AppAttest.RootCertificate.default/0`): the real, Apple-issued Receipt
+  G3", the Receipt root of `AppAttest.Trust`, not to the App Attest root an
+  Attestation's own chain uses: the real, Apple-issued Receipt
   inside the fixture Attestation chains Application Attestation Fraud
   Receipt Signing -> Apple Application Integration CA 5 - G1 -> Apple Root
   CA - G3, verifies against that root and does not verify against the App
-  Attest root (`AppAttest.ReceiptTest`, 64x-lunicorn/app_attest#23). The
-  root stays an explicit parameter all the same, so a test can substitute
-  its own.
+  Attest root (`AppAttest.ReceiptTest`, 64x-lunicorn/app_attest#23).
+  `verify/2` takes the whole `AppAttest.Trust` and picks its Receipt root
+  itself; the Trust stays an explicit parameter, so a test can substitute
+  its own root.
 
   ## Format
 
@@ -43,7 +43,7 @@ defmodule AppAttest.Receipt do
   ASN.1 module describes, is parsed by hand here.
   """
 
-  alias AppAttest.RootCertificate
+  alias AppAttest.{RootCertificate, Trust}
 
   @enforce_keys [:type, :expiration_time]
   defstruct [:type, :risk_metric, :not_before, :expiration_time]
@@ -71,7 +71,7 @@ defmodule AppAttest.Receipt do
 
   @typedoc """
   * `:untrusted_receipt` - the Receipt's signature, or its certificate
-    chain against the trusted root, does not verify.
+    chain against the Receipt root of the trust, does not verify.
   * `:invalid_receipt` - the bytes are not a well-formed CMS-signed Receipt,
     or a field it must carry is missing or unreadable.
   """
@@ -90,7 +90,8 @@ defmodule AppAttest.Receipt do
   @expiration_time_field 21
 
   @doc """
-  Verifies the DER-encoded `receipt` against the trusted `root` and reads
+  Verifies the DER-encoded `receipt` against the Receipt root of `trust`
+  (`AppAttest.Trust.apple/0` for a real Apple Receipt) and reads
   its fields: signature and certificate chain first, since a Receipt
   nothing has verified is not trustworthy enough to read at all, only then
   Apple's attribute list.
@@ -98,8 +99,8 @@ defmodule AppAttest.Receipt do
   Returns `{:ok, receipt}` or `{:error, rejection}`; never raises, whatever
   the bytes.
   """
-  @spec verify(binary(), RootCertificate.der()) :: {:ok, t()} | {:error, rejection()}
-  def verify(receipt, root) when is_binary(receipt) and is_binary(root) do
+  @spec verify(binary(), Trust.t()) :: {:ok, t()} | {:error, rejection()}
+  def verify(receipt, %Trust{receipt_root: root}) when is_binary(receipt) and is_binary(root) do
     with {:ok, signed_data} <- decode_signed_data(receipt),
          {:ok, content, signature, signer_id, certificates} <- signed_content(signed_data),
          {:ok, chain} <- signer_chain(signer_id, certificates),
@@ -110,7 +111,7 @@ defmodule AppAttest.Receipt do
     end
   end
 
-  def verify(_receipt, _root), do: {:error, :invalid_receipt}
+  def verify(_receipt, %Trust{}), do: {:error, :invalid_receipt}
 
   # OTP's ASN.1 decoder reports undecodable input by failing its own
   # `{:ok, _} = ...` match, so exactly that failure is caught.

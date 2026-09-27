@@ -1,7 +1,7 @@
 defmodule AppAttest.AttestationTest do
   use ExUnit.Case, async: true
 
-  alias AppAttest.{Attestation, Device, Fixtures, RootCertificate}
+  alias AppAttest.{Attestation, Device, Fixtures, Trust}
 
   # The real fixture's own key identifier, as Apple's SDK returned it and
   # the fixture file recorded it (`keyId`), written out here so the expected
@@ -31,7 +31,7 @@ defmodule AppAttest.AttestationTest do
       attestation.key_id,
       attestation.challenge,
       attestation.app_id,
-      attestation.root,
+      attestation.trust,
       environment
     )
   end
@@ -50,7 +50,7 @@ defmodule AppAttest.AttestationTest do
       key_id,
       Fixtures.challenge(),
       Fixtures.app_id(),
-      RootCertificate.default(),
+      Trust.apple(),
       :development
     )
   end
@@ -63,7 +63,7 @@ defmodule AppAttest.AttestationTest do
                  Fixtures.key_id(),
                  Fixtures.challenge(),
                  Fixtures.app_id(),
-                 RootCertificate.default(),
+                 Trust.apple(),
                  :development
                )
 
@@ -125,7 +125,7 @@ defmodule AppAttest.AttestationTest do
                Base.encode64(:crypto.hash(:sha256, "a different key")),
                Fixtures.challenge(),
                "TEAMID1234.not.this.app",
-               RootCertificate.default(),
+               Trust.apple(),
                :development
              ) == {:error, :key_id_mismatch}
     end
@@ -308,7 +308,7 @@ defmodule AppAttest.AttestationTest do
                Fixtures.key_id(),
                Fixtures.challenge(),
                Fixtures.app_id(),
-               RootCertificate.default(),
+               Trust.apple(),
                :development
              ) == {:error, :invalid_attestation}
     end
@@ -324,7 +324,7 @@ defmodule AppAttest.AttestationTest do
                Fixtures.key_id(),
                Fixtures.challenge(),
                Fixtures.app_id(),
-               <<1, 2, 3>>,
+               %Trust{Trust.apple() | app_attest_root: <<1, 2, 3>>},
                :development
              ) == {:error, :untrusted_root}
     end

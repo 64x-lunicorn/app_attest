@@ -1,31 +1,7 @@
 defmodule AppAttest.RootCertificateTest do
   use ExUnit.Case, async: true
 
-  alias AppAttest.{Fixtures, RootCertificate}
-
-  describe "default/0" do
-    test "is Apple's own App Attest root certificate" do
-      subject =
-        RootCertificate.default()
-        |> X509.Certificate.from_der!()
-        |> X509.Certificate.subject()
-        |> X509.RDNSequence.get_attr(:commonName)
-
-      assert subject == ["Apple App Attestation Root CA"]
-    end
-  end
-
-  describe "apple_root_ca_g3/0" do
-    test "is Apple's own general-purpose root, not the App Attest one" do
-      subject =
-        RootCertificate.apple_root_ca_g3()
-        |> X509.Certificate.from_der!()
-        |> X509.Certificate.subject()
-        |> X509.RDNSequence.get_attr(:commonName)
-
-      assert subject == ["Apple Root CA - G3"]
-    end
-  end
+  alias AppAttest.{Fixtures, RootCertificate, Trust}
 
   describe "trusted_leaf/2" do
     test "yields the leaf of a real Attestation's chain against Apple's real root" do
@@ -39,7 +15,7 @@ defmodule AppAttest.RootCertificateTest do
 
       assert {:ok, leaf} =
                RootCertificate.trusted_leaf(
-                 RootCertificate.default(),
+                 Trust.apple().app_attest_root,
                  Fixtures.certificate_chain()
                )
 
@@ -65,7 +41,7 @@ defmodule AppAttest.RootCertificateTest do
       [leaf_der, intermediate_der] = Fixtures.certificate_chain()
 
       for chain <- [[<<1, 2, 3>>, intermediate_der], [leaf_der, <<1, 2, 3>>]] do
-        assert RootCertificate.trusted_leaf(RootCertificate.default(), chain) ==
+        assert RootCertificate.trusted_leaf(Trust.apple().app_attest_root, chain) ==
                  {:error, :malformed_chain}
       end
     end
@@ -75,7 +51,7 @@ defmodule AppAttest.RootCertificateTest do
     # junk. A fixed seed keeps the positions, and so the test, deterministic.
     test "rejects the real chain with any single byte of a certificate changed, never raising" do
       chain = Fixtures.certificate_chain()
-      root = RootCertificate.default()
+      root = Trust.apple().app_attest_root
       state = :rand.seed_s(:exsss, {16, 16, 16})
 
       Enum.reduce(0..(length(chain) - 1), state, fn index, state ->

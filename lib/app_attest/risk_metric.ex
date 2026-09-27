@@ -16,14 +16,13 @@ defmodule AppAttest.RiskMetric do
   on its own.
 
   The new receipt is verified and read by `AppAttest.Receipt.verify/2`
-  against Apple's general-purpose "Apple Root CA - G3"
-  (`AppAttest.RootCertificate.apple_root_ca_g3/0`), not the App
-  Attest-specific root an Attestation's own chain uses
-  (`AppAttest.RootCertificate.default/0`): the real, Apple-issued Receipt
-  inside the fixture Attestation chains to Apple Root CA - G3 and not to
-  the App Attest root (`AppAttest.ReceiptTest`,
-  64x-lunicorn/app_attest#23). `root` stays an explicit parameter all the
-  same. Only a Receipt of type `RECEIPT` carrying the risk metric and both
+  against the Receipt root of the caller's `AppAttest.Trust`, Apple's
+  general-purpose "Apple Root CA - G3" in `AppAttest.Trust.apple/0`, not
+  the App Attest-specific root an Attestation's own chain uses: the real,
+  Apple-issued Receipt inside the fixture Attestation chains to Apple Root
+  CA - G3 and not to the App Attest root (`AppAttest.ReceiptTest`,
+  64x-lunicorn/app_attest#23). The Trust stays an explicit parameter all
+  the same. Only a Receipt of type `RECEIPT` carrying the risk metric and both
   validity dates answers this request; any other verified Receipt is
   `:invalid_receipt`.
 
@@ -34,11 +33,11 @@ defmodule AppAttest.RiskMetric do
   between the two.
   """
 
-  alias AppAttest.{Device, Receipt, RootCertificate}
+  alias AppAttest.{Device, Receipt, Trust}
 
   @typedoc """
   The Apple DeviceCheck key that authenticates this request to Apple: an
-  explicit parameter, like `AppAttest.RootCertificate`'s own root, never
+  explicit parameter, like `AppAttest.Trust`, never
   `Application` config or a compile-time flag.
 
     * `:key_id` - the 10-character DeviceCheck key identifier Apple
@@ -77,7 +76,7 @@ defmodule AppAttest.RiskMetric do
 
   @typedoc """
   * `:untrusted_receipt` - the receipt's signature, or its certificate
-    chain against `root`, does not verify.
+    chain against the Receipt root of `trust`, does not verify.
   * `:invalid_receipt` - Apple's response is not base64, or not a
     well-formed CMS-signed receipt of type `RECEIPT` carrying a risk metric
     and both validity dates.
@@ -111,10 +110,10 @@ defmodule AppAttest.RiskMetric do
   @doc """
   Sends `device`'s current `receipt` to Apple's risk-metric endpoint for
   its `environment`, authenticated with `device_check_key`, and
-  verifies the new receipt Apple returns against `root` —
-  `AppAttest.RootCertificate.apple_root_ca_g3/0` in production, the root a
-  real Apple Receipt chains to; a test substitutes its own, the same way `AppAttest.Attestation.validate/6`
-  takes its own root explicitly.
+  verifies the new receipt Apple returns against the Receipt root of
+  `trust` — `AppAttest.Trust.apple/0` in production, whose Receipt root is
+  the one a real Apple Receipt chains to; a test substitutes its own, the
+  same `AppAttest.Trust` that `AppAttest.Attestation.validate/6` takes.
 
   `opts[:transport]` replaces the real HTTP call to Apple with a stand-in,
   this module's only system boundary; every real caller omits it and gets
@@ -130,13 +129,13 @@ defmodule AppAttest.RiskMetric do
   @spec fetch(
           Device.t(),
           device_check_key(),
-          RootCertificate.der(),
+          Trust.t(),
           transport: transport()
         ) :: {:ok, result()} | {:error, rejection()}
   def fetch(
         %Device{receipt: receipt, environment: environment} = device,
         device_check_key,
-        root,
+        %Trust{} = trust,
         opts \\ []
       ) do
     transport = Keyword.get(opts, :transport, &http_request/1)
@@ -150,7 +149,7 @@ defmodule AppAttest.RiskMetric do
     case transport.(request) do
       {:ok, 200, body} ->
         with {:ok, new_receipt} <- decode_base64(body),
-             {:ok, verified} <- verify_receipt(new_receipt, root) do
+             {:ok, verified} <- verify_receipt(new_receipt, trust) do
           risk_metric_fields(verified, %Device{device | receipt: new_receipt})
         end
 
@@ -166,8 +165,8 @@ defmodule AppAttest.RiskMetric do
   # of `rejection/0` is minted in this module, as `AppAttest.Attestation`
   # does with `AppAttest.RootCertificate`'s. Each keeps its meaning: the
   # new receipt does not verify, or is not a well-formed Receipt.
-  defp verify_receipt(receipt, root) do
-    case Receipt.verify(receipt, root) do
+  defp verify_receipt(receipt, trust) do
+    case Receipt.verify(receipt, trust) do
       {:ok, verified} -> {:ok, verified}
       {:error, :untrusted_receipt} -> {:error, :untrusted_receipt}
       {:error, :invalid_receipt} -> {:error, :invalid_receipt}

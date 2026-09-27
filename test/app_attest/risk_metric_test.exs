@@ -1,7 +1,7 @@
 defmodule AppAttest.RiskMetricTest do
   use ExUnit.Case, async: true
 
-  alias AppAttest.{Attestation, Device, Fixtures, RiskMetric, RootCertificate}
+  alias AppAttest.{Attestation, Device, Fixtures, RiskMetric, Trust}
 
   # `fetch/4`'s own transport seam (`write-tests`: mocking only at this
   # module's system boundary, Apple's HTTP endpoint) - a stand-in that
@@ -17,7 +17,7 @@ defmodule AppAttest.RiskMetricTest do
         Fixtures.key_id(),
         Fixtures.challenge(),
         Fixtures.app_id(),
-        RootCertificate.default(),
+        Trust.apple(),
         :development
       )
 
@@ -44,7 +44,7 @@ defmodule AppAttest.RiskMetricTest do
       receipt = Fixtures.receipt(42, chain)
       transport = respond(200, Base.encode64(receipt))
 
-      assert RiskMetric.fetch(device, Fixtures.device_check_key(), chain.root,
+      assert RiskMetric.fetch(device, Fixtures.device_check_key(), chain.trust,
                transport: transport
              ) ==
                {:ok,
@@ -70,7 +70,7 @@ defmodule AppAttest.RiskMetricTest do
                RiskMetric.fetch(
                  stored_device(),
                  Fixtures.device_check_key(),
-                 chain.root,
+                 chain.trust,
                  transport: transport
                )
 
@@ -90,7 +90,7 @@ defmodule AppAttest.RiskMetricTest do
       end
 
       assert {:ok, _result} =
-               RiskMetric.fetch(stored_device(:production), device_check_key, chain.root,
+               RiskMetric.fetch(stored_device(:production), device_check_key, chain.trust,
                  transport: transport
                )
 
@@ -151,7 +151,7 @@ defmodule AppAttest.RiskMetricTest do
                  RiskMetric.fetch(
                    stored_device(),
                    Fixtures.device_check_key(),
-                   chain.root,
+                   chain.trust,
                    transport: transport
                  )
       end
@@ -164,7 +164,7 @@ defmodule AppAttest.RiskMetricTest do
                RiskMetric.fetch(
                  stored_device(),
                  Fixtures.device_check_key(),
-                 Fixtures.risk_metric_chain().root,
+                 Fixtures.risk_metric_chain().trust,
                  transport: transport
                )
     end
@@ -176,7 +176,7 @@ defmodule AppAttest.RiskMetricTest do
                RiskMetric.fetch(
                  stored_device(),
                  Fixtures.device_check_key(),
-                 Fixtures.risk_metric_chain().root,
+                 Fixtures.risk_metric_chain().trust,
                  transport: transport
                )
     end
@@ -188,7 +188,7 @@ defmodule AppAttest.RiskMetricTest do
                RiskMetric.fetch(
                  stored_device(),
                  Fixtures.device_check_key(),
-                 Fixtures.risk_metric_chain().root,
+                 Fixtures.risk_metric_chain().trust,
                  transport: transport
                )
     end

@@ -45,7 +45,7 @@ defmodule AppAttest.AssertionTest do
           attestation.key_id,
           attestation.challenge,
           attestation.app_id,
-          attestation.root,
+          attestation.trust,
           :development
         )
 

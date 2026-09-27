@@ -47,7 +47,7 @@ defmodule AppAttest.RiskMetricAppleTest do
 
   use ExUnit.Case, async: true
 
-  alias AppAttest.{AppleCredentials, Attestation, Fixtures, RiskMetric, RootCertificate}
+  alias AppAttest.{AppleCredentials, Attestation, Fixtures, RiskMetric, Trust}
 
   @moduletag :apple_endpoint
   # A real round trip to Apple, over the real network.
@@ -86,14 +86,10 @@ defmodule AppAttest.RiskMetricAppleTest do
         Fixtures.key_id(),
         Fixtures.challenge(),
         Fixtures.app_id(),
-        RootCertificate.default(),
+        Trust.apple(),
         :development
       )
 
-    RiskMetric.fetch(
-      device,
-      device_check_key,
-      RootCertificate.apple_root_ca_g3()
-    )
+    RiskMetric.fetch(device, device_check_key, Trust.apple())
   end
 end
