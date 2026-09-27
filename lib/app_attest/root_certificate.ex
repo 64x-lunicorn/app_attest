@@ -60,8 +60,22 @@ defmodule AppAttest.RootCertificate do
   -----END CERTIFICATE-----
   """
 
+  require Record
+
+  # Only for the `otp_certificate` type below: x509's own
+  # `X509.Certificate.t()` names a type that does not exist, which
+  # Dialyzer reports as unknown wherever a spec refers to it.
+  Record.defrecordp(
+    :otp_certificate,
+    :OTPCertificate,
+    Record.extract(:OTPCertificate, from_lib: "public_key/include/public_key.hrl")
+  )
+
   @typedoc "A DER-encoded X.509 certificate."
   @type der :: binary()
+
+  @typedoc "A decoded X.509 certificate: `:public_key`'s `:OTPCertificate` record."
+  @type otp_certificate :: record(:otp_certificate)
 
   @doc """
   Apple's real, compiled-in App Attest root certificate, DER-encoded.
@@ -114,7 +128,7 @@ defmodule AppAttest.RootCertificate do
   the signature chain, which is what actually proves the chain leads to
   `root`.
   """
-  @spec trusted_leaf(der(), [der(), ...]) :: {:ok, X509.Certificate.t()} | {:error, rejection()}
+  @spec trusted_leaf(der(), [der(), ...]) :: {:ok, otp_certificate()} | {:error, rejection()}
   def trusted_leaf(root, [_ | _] = chain) when is_binary(root) do
     # OTP's path validation raises on anything that is not a DER
     # certificate, so `root` and every certificate of `chain` are decoded
