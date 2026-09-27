@@ -55,6 +55,19 @@ defmodule AppAttest.AttestationTest do
     )
   end
 
+  # Validates Apple's real fixture Attestation with its certificate chain
+  # replaced by `chain` (DER, leaf first), against `trust`.
+  defp validate_fixture_chain(chain, trust) do
+    Attestation.validate(
+      Fixtures.attestation_with_chain(chain),
+      Fixtures.key_id(),
+      Fixtures.challenge(),
+      Fixtures.app_id(),
+      trust,
+      :development
+    )
+  end
+
   describe "validate/6" do
     test "returns a Device carrying the receipt a genuine Attestation brought in attStmt.receipt" do
       assert {:ok, %Device{} = device} =
@@ -300,23 +313,67 @@ defmodule AppAttest.AttestationTest do
       assert validate_self_generated(attestation) == {:error, :invalid_attestation}
     end
 
-    test "rejects Apple's real fixture with junk in place of its intermediate instead of crashing" do
-      [leaf_der | _intermediates] = Fixtures.certificate_chain()
+    test "rejects Apple's real fixture with junk in place of any certificate of its chain instead of crashing" do
+      [leaf_der, intermediate_der] = Fixtures.certificate_chain()
 
-      assert Attestation.validate(
-               Fixtures.attestation_with_chain([leaf_der, <<1, 2, 3>>]),
-               Fixtures.key_id(),
-               Fixtures.challenge(),
-               Fixtures.app_id(),
-               Trust.apple(),
-               :development
-             ) == {:error, :invalid_attestation}
+      for chain <- [[<<1, 2, 3>>, intermediate_der], [leaf_der, <<1, 2, 3>>]] do
+        assert validate_fixture_chain(chain, Trust.apple()) == {:error, :invalid_attestation}
+      end
     end
 
-    # Any single byte of a certificate changed is proven rejected, never a
-    # crash, once, at `AppAttest.RootCertificate.trusted_leaf/2` in its own
-    # test file; the two tests around this comment prove how Attestation
-    # translates its two reasons.
+    test "accepts Apple's real fixture although its credential certificate has long expired" do
+      # The fixture's credCert was issued in February 2024 for a few weeks'
+      # validity (App Attest leaf certificates are always short-lived) and
+      # so is long expired by the time this test runs; validity periods are
+      # deliberately not checked, only the signature chain.
+      [leaf_der | _intermediates] = Fixtures.certificate_chain()
+
+      {:Validity, _not_before, not_after} =
+        leaf_der |> X509.Certificate.from_der!() |> X509.Certificate.validity()
+
+      assert DateTime.compare(X509.DateTime.to_datetime(not_after), DateTime.utc_now()) == :lt
+      assert {:ok, %Device{}} = validate_fixture(@fixture_key_id)
+    end
+
+    test "rejects Apple's real fixture as untrusted against an unrelated root" do
+      trust = %Trust{Trust.apple() | app_attest_root: Fixtures.untrusted_root()}
+
+      assert validate_fixture_chain(Fixtures.certificate_chain(), trust) ==
+               {:error, :untrusted_root}
+    end
+
+    test "rejects two certificates that were not issued from one another as untrusted" do
+      trust = %Trust{Trust.apple() | app_attest_root: Fixtures.untrusted_root()}
+
+      assert validate_fixture_chain([Fixtures.untrusted_root()], trust) ==
+               {:error, :untrusted_root}
+    end
+
+    # OTP's certificate decoding and path validation raise or exit in many
+    # different ways for DER that is damaged deep inside, not only for
+    # junk. A fixed seed keeps the positions, and so the test, deterministic.
+    test "rejects Apple's real fixture with any single byte of a certificate changed, never raising" do
+      chain = Fixtures.certificate_chain()
+      trust = Trust.apple()
+      state = :rand.seed_s(:exsss, {16, 16, 16})
+
+      Enum.reduce(0..(length(chain) - 1), state, fn index, state ->
+        Enum.reduce(1..200, state, fn _mutation, state ->
+          der = Enum.at(chain, index)
+          {position, state} = :rand.uniform_s(byte_size(der), state)
+          mutated_chain = List.replace_at(chain, index, Fixtures.flip_byte(der, position - 1))
+
+          # A changed certificate is never trusted, whether it still
+          # decodes or not.
+          assert validate_fixture_chain(mutated_chain, trust) in [
+                   {:error, :invalid_attestation},
+                   {:error, :untrusted_root}
+                 ]
+
+          state
+        end)
+      end)
+    end
 
     test "rejects Apple's real fixture against a root that is not a certificate instead of crashing" do
       assert Attestation.validate(

@@ -1,14 +1,14 @@
 defmodule AppAttest.RootCertificate do
-  @moduledoc """
-  Certificate-chain trust against one root certificate.
+  @moduledoc false
 
-  The root always comes from the `AppAttest.Trust` a caller passes to the
-  operation that checks the chain, never `Application` config or a
-  compile-time flag: `AppAttest.Trust.apple/0` hands back Apple's real
-  roots as compiled-in data, but a caller (or a test) can substitute any
-  other DER-encoded certificate to construct the chains it needs,
-  including ones that must be rejected.
-  """
+  # Certificate-chain trust against one root certificate, and nothing a
+  # caller calls: only `AppAttest.Attestation` and `AppAttest.Receipt` do,
+  # each with the root it picks from the caller's `AppAttest.Trust`, and
+  # each translates this module's own `rejection/0` into its public
+  # reasons at its seam. So the chain's rejections are proven through
+  # those two (`AppAttest.AttestationTest`), and the root is always the
+  # explicit parameter the caller passed, never `Application` config or a
+  # compile-time flag.
 
   require Record
 
@@ -38,22 +38,21 @@ defmodule AppAttest.RootCertificate do
   """
   @type rejection :: :malformed_chain | :untrusted_chain
 
-  @doc """
-  The trusted leaf of `chain` — a leaf-first list of DER-encoded
-  certificates, as Apple's `x5c` array carries them, not including `root`
-  itself — when it chains to the trusted `root` certificate: `{:ok, leaf}`
-  with the leaf decoded, or `{:error, rejection}`. Every certificate is
-  decoded once, and junk in place of `root` or of any certificate in
-  `chain` is a rejection, never a raise.
-
-  Certificate validity periods are not checked. App Attest's own leaf
-  certificates are short-lived by design (Apple issues a fresh one per
-  Attestation, valid only a few days), and neither of this library's two
-  main reference implementations (takimoto3/app-attest, in Go;
-  uebelack/node-app-attest, in Node) check them either — both verify only
-  the signature chain, which is what actually proves the chain leads to
-  `root`.
-  """
+  # The trusted leaf of `chain` — a leaf-first list of DER-encoded
+  # certificates, as Apple's `x5c` array carries them, not including `root`
+  # itself — when it chains to the trusted `root` certificate: `{:ok, leaf}`
+  # with the leaf decoded, or `{:error, rejection}`. Every certificate is
+  # decoded once, and junk in place of `root` or of any certificate in
+  # `chain` is a rejection, never a raise.
+  #
+  # Certificate validity periods are not checked. App Attest's own leaf
+  # certificates are short-lived by design (Apple issues a fresh one per
+  # Attestation, valid only a few days), and neither of this library's two
+  # main reference implementations (takimoto3/app-attest, in Go;
+  # uebelack/node-app-attest, in Node) check them either — both verify only
+  # the signature chain, which is what actually proves the chain leads to
+  # `root`.
+  @doc false
   @spec trusted_leaf(der(), [der(), ...]) :: {:ok, otp_certificate()} | {:error, rejection()}
   def trusted_leaf(root, [_ | _] = chain) when is_binary(root) do
     # OTP's path validation raises on anything that is not a DER
@@ -111,7 +110,7 @@ defmodule AppAttest.RootCertificate do
   end
 
   # Chain validation is otherwise OTP's own PKIX rules (RFC 5280); only the
-  # expiry check is relaxed, for the reason `trusted_leaf/2` documents above.
+  # expiry check is relaxed, for the reason given above `trusted_leaf/2`.
   defp accept_expired(_cert, {:bad_cert, :cert_expired}, state), do: {:valid, state}
   defp accept_expired(_cert, {:bad_cert, _} = reason, _state), do: {:fail, reason}
   defp accept_expired(_cert, {:extension, _}, state), do: {:unknown, state}

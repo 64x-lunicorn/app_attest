@@ -26,8 +26,6 @@ defmodule AppAttest.Trust do
       %AppAttest.Trust{AppAttest.Trust.apple() | receipt_root: test_root}
   """
 
-  alias AppAttest.RootCertificate
-
   # Apple's own "Apple App Attestation Root CA", published at
   # https://www.apple.com/certificateauthority/Apple_App_Attestation_Root_CA.pem
   # and confirmed byte-for-byte identical in two independent MIT-licensed
@@ -87,8 +85,8 @@ defmodule AppAttest.Trust do
     * `:receipt_root` - the root a Receipt's chain must lead to.
   """
   @type t :: %__MODULE__{
-          app_attest_root: RootCertificate.der(),
-          receipt_root: RootCertificate.der()
+          app_attest_root: binary(),
+          receipt_root: binary()
         }
 
   @doc """

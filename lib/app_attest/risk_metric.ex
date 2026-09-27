@@ -163,8 +163,8 @@ defmodule AppAttest.RiskMetric do
 
   # Receipt's own reasons are translated here, at this seam, so every atom
   # of `rejection/0` is minted in this module, as `AppAttest.Attestation`
-  # does with `AppAttest.RootCertificate`'s. Each keeps its meaning: the
-  # new receipt does not verify, or is not a well-formed Receipt.
+  # does with its certificate chain's. Each keeps its meaning: the new
+  # receipt does not verify, or is not a well-formed Receipt.
   defp verify_receipt(receipt, trust) do
     case Receipt.verify(receipt, trust) do
       {:ok, verified} -> {:ok, verified}

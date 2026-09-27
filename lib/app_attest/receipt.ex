@@ -143,7 +143,7 @@ defmodule AppAttest.Receipt do
   # `{:certificate, cert_record}` per entry; matching the SignerInfo's own
   # issuer and serial number against each record's finds the signer
   # regardless of how Apple orders the set. Returns the set's DER, signer
-  # first, for `AppAttest.RootCertificate.trusted_leaf/2`, which decodes
+  # first, for `RootCertificate.trusted_leaf/2`, which decodes
   # each certificate once.
   defp signer_chain({:issuerAndSerialNumber, {:IssuerAndSerialNumber, issuer, serial}}, certs) do
     records = for {:certificate, record} <- List.wrap(certs), do: record
