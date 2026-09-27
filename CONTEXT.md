@@ -10,7 +10,7 @@ The words this project uses with one fixed meaning, one paragraph each. Code, is
 
 **Risk metric**: Apple's own signal, fetched per device from its servers, estimating how many distinct devices have used the same attested key; informational only, never a reason to accept or reject.
 
-**Device**: What a caller stores per attested key — its public key, Counter, environment and current Receipt — returned by an Attestation and moved on by every Assertion; app_attest itself never stores it.
+**Device**: What a caller stores per attested key — its public key, Counter, environment and current Receipt — returned by an Attestation, moved on by every Assertion and by every Risk metric fetch; app_attest itself never stores it.
 
 **Key ID**: The name a device gives its own App Attest key, derived from the key itself, so a key can only be recorded under the one name it yields.
 
