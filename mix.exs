@@ -1,6 +1,8 @@
 defmodule AppAttest.MixProject do
   use Mix.Project
 
+  @source_url "https://github.com/64x-lunicorn/app_attest"
+
   def project do
     [
       app: :app_attest,
@@ -9,7 +11,11 @@ defmodule AppAttest.MixProject do
       start_permanent: Mix.env() == :prod,
       elixirc_paths: elixirc_paths(Mix.env()),
       deps: deps(),
-      aliases: aliases()
+      aliases: aliases(),
+      description: description(),
+      package: package(),
+      source_url: @source_url,
+      docs: docs()
     ]
   end
 
@@ -25,7 +31,35 @@ defmodule AppAttest.MixProject do
   defp deps do
     [
       {:cbor, "~> 1.0"},
-      {:x509, "~> 0.9"}
+      {:x509, "~> 0.9"},
+      {:ex_doc, "~> 0.40", only: [:dev, :test], runtime: false}
+    ]
+  end
+
+  defp description do
+    "Validates Apple App Attest attestations and assertions, including the " <>
+      "certificate chain, nonce, App ID hash, replay-safe Counter and Apple's " <>
+      "per-device Risk metric."
+  end
+
+  defp package do
+    [
+      licenses: ["Apache-2.0"],
+      links: %{"GitHub" => @source_url},
+      files: ~w(lib mix.exs .formatter.exs README.md LICENSE NOTICE)
+    ]
+  end
+
+  defp docs do
+    [
+      main: "readme",
+      extras: ["README.md", "CONTEXT.md", "LICENSE"],
+      assets: %{"docs/assets" => "docs/assets"},
+      # `mix ci` builds the docs in the test env, which also compiles
+      # test/support; its helpers are not part of the library.
+      filter_modules: fn _module, %{source_path: path} ->
+        not String.contains?(to_string(path), "/test/support/")
+      end
     ]
   end
 
@@ -38,7 +72,11 @@ defmodule AppAttest.MixProject do
         "format --check-formatted",
         "deps.unlock --check-unused",
         "compile --warnings-as-errors",
-        "test"
+        "test",
+        "docs --warnings-as-errors",
+        # In its own process: compiling prunes the Hex archive's code path,
+        # so `hex.build` is no longer found later in the same Mix run.
+        "cmd mix hex.build"
       ]
     ]
   end
