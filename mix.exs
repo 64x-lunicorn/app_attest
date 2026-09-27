@@ -15,7 +15,8 @@ defmodule AppAttest.MixProject do
       description: description(),
       package: package(),
       source_url: @source_url,
-      docs: docs()
+      docs: docs(),
+      dialyzer: dialyzer()
     ]
   end
 
@@ -32,7 +33,10 @@ defmodule AppAttest.MixProject do
     [
       {:cbor, "~> 1.0"},
       {:x509, "~> 0.9"},
-      {:ex_doc, "~> 0.40", only: [:dev, :test], runtime: false}
+      {:ex_doc, "~> 0.40", only: [:dev, :test], runtime: false},
+      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
+      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
+      {:mix_audit, "~> 2.1", only: [:dev, :test], runtime: false}
     ]
   end
 
@@ -63,6 +67,16 @@ defmodule AppAttest.MixProject do
     ]
   end
 
+  # One fixed PLT location, so the gate's `mix dialyzer` (dev env) and
+  # `mix ci` (test env) share it instead of each building its own under
+  # `_build/<env>`.
+  defp dialyzer do
+    [
+      plt_core_path: "priv/plts",
+      plt_local_path: "priv/plts"
+    ]
+  end
+
   defp elixirc_paths(:test), do: ["lib", "test/support"]
   defp elixirc_paths(_env), do: ["lib"]
 
@@ -74,9 +88,14 @@ defmodule AppAttest.MixProject do
         "compile --warnings-as-errors",
         "test",
         "docs --warnings-as-errors",
-        # In its own process: compiling prunes the Hex archive's code path,
-        # so `hex.build` is no longer found later in the same Mix run.
-        "cmd mix hex.build"
+        # `hex.build` and `hex.audit` each in their own process: compiling
+        # prunes the Hex archive's code path, so Hex tasks are no longer
+        # found later in the same Mix run.
+        "cmd mix hex.build",
+        "credo --strict",
+        "dialyzer",
+        "cmd mix hex.audit",
+        "deps.audit"
       ]
     ]
   end
