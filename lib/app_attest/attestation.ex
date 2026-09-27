@@ -36,8 +36,8 @@ defmodule AppAttest.Attestation do
     authenticator data's credentialId, differs from it, or `key_id` is not
     base64 at all. A `key_id` that does not decode is one more Key ID that
     is not this key's, so it is not told apart.
-  * `:invalid_authenticator_data` - the authenticator data is truncated
-    (`AppAttest.AuthenticatorData.parse/1`).
+  * `:invalid_authenticator_data` - the authenticator data is shorter than
+    its fixed 37-byte prefix, or its attested credential data is truncated.
   * `:app_id_mismatch` - the App ID hash does not match `app_id`.
   * `:counter_not_zero` - the authenticator data's Counter is not 0, the
     value every freshly attested key starts at.
@@ -89,7 +89,7 @@ defmodule AppAttest.Attestation do
   key, start Counter, App Attest environment (`:development` or
   `:production`, read from the attestation's own `aaguid`, and so
   always `expected_environment`) and the receipt the Attestation carried
-  in `attStmt.receipt` (the one the first `AppAttest.RiskMetric.fetch/5`
+  in `attStmt.receipt` (the one the first `AppAttest.RiskMetric.fetch/4`
   sends) for the caller to persist, or `{:error, rejection}`.
   """
   @spec validate(
@@ -98,45 +98,61 @@ defmodule AppAttest.Attestation do
           binary(),
           String.t(),
           RootCertificate.der(),
-          AuthenticatorData.environment()
+          Device.environment()
         ) :: {:ok, Device.t()} | {:error, rejection()}
   def validate(attestation_object, key_id, challenge, app_id, root, expected_environment) do
     with {:ok, %{auth_data: auth_data, chain: chain, receipt: receipt}} <-
-           Envelope.decode_attestation(attestation_object),
-         {:ok, leaf} <- parse_chain(chain),
-         :ok <- check_trusted_chain(root, chain),
+           decode(attestation_object),
+         {:ok, leaf} <- check_trusted_chain(root, chain),
          :ok <- check_nonce(leaf, auth_data, challenge),
          {:ok, key_id_bytes} <- check_public_key_hash(leaf, key_id),
-         {:ok, authenticator_data} <- AuthenticatorData.parse(auth_data),
-         :ok <- AuthenticatorData.check_app_id(authenticator_data, app_id),
+         {:ok, authenticator_data} <- parse_authenticator_data(auth_data),
+         :ok <- check_app_id(authenticator_data, app_id),
          :ok <- check_counter(authenticator_data.counter),
-         {:ok, environment} <-
-           check_environment(authenticator_data.aaguid, expected_environment),
+         :ok <- check_environment(authenticator_data.environment, expected_environment),
          :ok <- check_credential_id(authenticator_data.credential_id, key_id_bytes) do
       {:ok,
        %Device{
-         public_key: X509.Certificate.public_key(leaf),
+         public_key: leaf |> X509.Certificate.public_key() |> X509.PublicKey.to_der(),
          counter: authenticator_data.counter,
-         environment: environment,
+         environment: authenticator_data.environment,
          receipt: receipt
        }}
     end
   end
 
-  # Every certificate of the chain is parsed before path validation, not
-  # only the leaf: junk in place of an intermediate is a malformed
-  # Attestation, rejected here rather than raised on inside OTP's path
-  # validation. Returns the parsed leaf.
-  defp parse_chain([_leaf_der | _rest_of_chain] = chain) do
-    [leaf | _rest] = parsed = Enum.map(chain, &RootCertificate.parse/1)
-
-    if Enum.all?(parsed, &match?({:ok, _certificate}, &1)),
-      do: leaf,
-      else: {:error, :invalid_attestation}
+  # Envelope, AuthenticatorData and RootCertificate each speak their own
+  # reasons; every atom of `rejection/0` is minted here, at this seam.
+  defp decode(attestation_object) do
+    case Envelope.decode_attestation(attestation_object) do
+      {:ok, attestation} -> {:ok, attestation}
+      {:error, :malformed_object} -> {:error, :invalid_attestation}
+    end
   end
 
+  defp parse_authenticator_data(auth_data) do
+    case AuthenticatorData.parse(auth_data) do
+      {:ok, authenticator_data} -> {:ok, authenticator_data}
+      {:error, :truncated} -> {:error, :invalid_authenticator_data}
+    end
+  end
+
+  defp check_app_id(authenticator_data, app_id) do
+    case AuthenticatorData.check_app_id(authenticator_data, app_id) do
+      :ok -> :ok
+      {:error, :other_app_id} -> {:error, :app_id_mismatch}
+    end
+  end
+
+  # Junk in place of any certificate of the chain, not only the leaf, is a
+  # malformed Attestation; a well-formed chain that does not lead to `root`
+  # is an untrusted one. Returns the trusted, decoded leaf.
   defp check_trusted_chain(root, chain) do
-    if RootCertificate.trusted?(root, chain), do: :ok, else: {:error, :untrusted_root}
+    case RootCertificate.trusted_leaf(root, chain) do
+      {:ok, leaf} -> {:ok, leaf}
+      {:error, :malformed_chain} -> {:error, :invalid_attestation}
+      {:error, :untrusted_chain} -> {:error, :untrusted_root}
+    end
   end
 
   # Apple's step 5: the Key ID is the SHA-256 of the credential
@@ -163,18 +179,9 @@ defmodule AppAttest.Attestation do
   defp check_credential_id(key_id_bytes, key_id_bytes), do: :ok
   defp check_credential_id(_credential_id, _key_id_bytes), do: {:error, :key_id_mismatch}
 
-  defp check_environment(aaguid, expected_environment) do
-    case AuthenticatorData.environment(aaguid) do
-      ^expected_environment ->
-        {:ok, expected_environment}
-
-      environment when environment in [:development, :production] ->
-        {:error, :environment_mismatch}
-
-      {:error, :unrecognized_environment} = error ->
-        error
-    end
-  end
+  defp check_environment(nil, _expected_environment), do: {:error, :unrecognized_environment}
+  defp check_environment(expected_environment, expected_environment), do: :ok
+  defp check_environment(_other_environment, _expected), do: {:error, :environment_mismatch}
 
   defp check_nonce(leaf, auth_data, challenge) do
     expected_nonce = AuthenticatorData.nonce(auth_data, challenge)

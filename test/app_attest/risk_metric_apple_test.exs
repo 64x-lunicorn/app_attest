@@ -1,11 +1,11 @@
 defmodule AppAttest.RiskMetricAppleTest do
   @moduledoc """
-  `AppAttest.RiskMetric.fetch/5` against Apple's *real* development
+  `AppAttest.RiskMetric.fetch/4` against Apple's *real* development
   risk-metric endpoint, over its real `:httpc` transport — the one part of
   this module that no stand-in can prove.
 
   Everything `AppAttest.RiskMetricTest` asserts about the request is
-  self-consistency: it checks that the JWT `fetch/5` builds verifies against
+  self-consistency: it checks that the JWT `fetch/4` builds verifies against
   the very key the same test generated. That cannot catch a JWT Apple
   itself rejects — a wrong signature encoding, a wrong header, a missing
   claim, a "Bearer " prefix Apple does not want. Only Apple can, and it
@@ -30,11 +30,15 @@ defmodule AppAttest.RiskMetricAppleTest do
   receipt, but issued to a foreign team and long expired, so Apple answers
   it with `400`. A `200` needs a receipt from a device running Corridor's
   own app under this Team ID, which does not exist until Corridor ships to
-  TestFlight. Until then the whole receipt-parsing half of
-  `AppAttest.RiskMetric` — the CMS envelope, the chain to Apple Root CA -
-  G3, Apple's own attribute list — is exercised only against the
-  self-generated receipts in `AppAttest.Fixtures`, never against one Apple
-  actually signed.
+  TestFlight. The receipt-reading half itself is proven on real bytes
+  elsewhere: `AppAttest.ReceiptTest` verifies that same Apple-issued
+  `ATTEST` Receipt — its CMS envelope, its chain to Apple Root CA - G3 (and
+  not to the App Attest root), Apple's own attribute list — which settles
+  the root question 64x-lunicorn/Corridor#171 and 64x-lunicorn/Corridor#174
+  left open. What no real bytes prove yet is a `RECEIPT`-type Receipt, the
+  only type carrying a risk metric and a Not Before date: those fields are
+  exercised only against the self-generated receipts in `AppAttest.Fixtures`
+  (64x-lunicorn/app_attest#20).
 
   Tagged `:apple_endpoint`, which `test_helper.exs` excludes unless
   `AppAttest.AppleCredentials.available?/0` — a clone without an Apple
@@ -43,13 +47,13 @@ defmodule AppAttest.RiskMetricAppleTest do
 
   use ExUnit.Case, async: true
 
-  alias AppAttest.{AppleCredentials, Attestation, Device, Fixtures, RiskMetric, RootCertificate}
+  alias AppAttest.{AppleCredentials, Attestation, Fixtures, RiskMetric, RootCertificate}
 
   @moduletag :apple_endpoint
   # A real round trip to Apple, over the real network.
   @moduletag timeout: 60_000
 
-  describe "fetch/5 against Apple's real development endpoint" do
+  describe "fetch/4 against Apple's real development endpoint" do
     test "Apple accepts a JWT signed by the real DeviceCheck key" do
       assert {:error, {:apple_error, status, _body}} = fetch(AppleCredentials.device_check_key!())
 
@@ -76,7 +80,7 @@ defmodule AppAttest.RiskMetricAppleTest do
   # No `opts[:transport]`: the real `:httpc` call is half of what is under
   # test here.
   defp fetch(device_check_key) do
-    {:ok, %Device{receipt: receipt}} =
+    {:ok, device} =
       Attestation.validate(
         Fixtures.attestation(),
         Fixtures.key_id(),
@@ -87,8 +91,7 @@ defmodule AppAttest.RiskMetricAppleTest do
       )
 
     RiskMetric.fetch(
-      receipt,
-      :development,
+      device,
       device_check_key,
       RootCertificate.apple_root_ca_g3()
     )

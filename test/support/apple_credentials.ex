@@ -34,7 +34,7 @@ defmodule AppAttest.AppleCredentials do
   end
 
   @doc """
-  The real DeviceCheck key, in the shape `AppAttest.RiskMetric.fetch/5`
+  The real DeviceCheck key, in the shape `AppAttest.RiskMetric.fetch/4`
   takes. Raises unless `available?/0`, which is what the tests that call
   this are excluded on.
   """

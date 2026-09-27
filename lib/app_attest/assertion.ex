@@ -28,8 +28,9 @@ defmodule AppAttest.Assertion do
     `authenticatorData`, or one of the two not a CBOR byte string. Which
     CBOR decoding failure it was is deliberately not told apart, so no atom
     of the `cbor` package reaches a caller.
-  * `:invalid_authenticator_data` - the authenticator data is truncated
-    (`AppAttest.AuthenticatorData.parse/1`).
+  * `:invalid_authenticator_data` - the authenticator data is shorter than
+    its fixed 37-byte prefix, or what follows the prefix is not
+    well-formed attested credential data.
   * `:invalid_signature` - the signature does not match the Device's
     `public_key` and `client_data`.
   * `:app_id_mismatch` - the App ID hash does not match `app_id`.
@@ -72,7 +73,7 @@ defmodule AppAttest.Assertion do
           binary(),
           String.t(),
           Device.t(),
-          AuthenticatorData.environment()
+          Device.environment()
         ) :: {:ok, Device.t()} | {:error, rejection()}
   def validate(
         assertion_object,
@@ -82,13 +83,35 @@ defmodule AppAttest.Assertion do
         expected_environment
       ) do
     with :ok <- check_environment(device.environment, expected_environment),
-         {:ok, %{signature: signature, auth_data: auth_data}} <-
-           Envelope.decode_assertion(assertion_object),
-         {:ok, authenticator_data} <- AuthenticatorData.parse(auth_data),
+         {:ok, %{signature: signature, auth_data: auth_data}} <- decode(assertion_object),
+         {:ok, authenticator_data} <- parse_authenticator_data(auth_data),
          :ok <- check_signature(auth_data, client_data, signature, public_key),
-         :ok <- AuthenticatorData.check_app_id(authenticator_data, app_id),
+         :ok <- check_app_id(authenticator_data, app_id),
          {:ok, counter} <- check_counter(authenticator_data, stored_counter) do
       {:ok, %Device{device | counter: counter}}
+    end
+  end
+
+  # Envelope and AuthenticatorData each speak their own reasons; every atom
+  # of `rejection/0` is minted here, at this seam.
+  defp decode(assertion_object) do
+    case Envelope.decode_assertion(assertion_object) do
+      {:ok, assertion} -> {:ok, assertion}
+      {:error, :malformed_object} -> {:error, :invalid_assertion}
+    end
+  end
+
+  defp parse_authenticator_data(auth_data) do
+    case AuthenticatorData.parse(auth_data) do
+      {:ok, authenticator_data} -> {:ok, authenticator_data}
+      {:error, :truncated} -> {:error, :invalid_authenticator_data}
+    end
+  end
+
+  defp check_app_id(authenticator_data, app_id) do
+    case AuthenticatorData.check_app_id(authenticator_data, app_id) do
+      :ok -> :ok
+      {:error, :other_app_id} -> {:error, :app_id_mismatch}
     end
   end
 
@@ -103,13 +126,18 @@ defmodule AppAttest.Assertion do
   # An Assertion's signature covers Apple's own nonce construction, built
   # by the one shared `AppAttest.AuthenticatorData.nonce/2` an Attestation's
   # own nonce check uses too, never `auth_data` alone.
-  defp check_signature(auth_data, client_data, signature, public_key) do
+  #
+  # The Device stores its public key as a DER-encoded SubjectPublicKeyInfo
+  # (`AppAttest.Device`), so it is decoded here, behind the seam, into the
+  # term `:public_key.verify/4` needs.
+  defp check_signature(auth_data, client_data, signature, public_key_der) do
     nonce = AuthenticatorData.nonce(auth_data, client_data)
 
-    if :public_key.verify(nonce, :sha256, signature, public_key) do
+    with {:ok, public_key} <- X509.PublicKey.from_der(public_key_der),
+         true <- :public_key.verify(nonce, :sha256, signature, public_key) do
       :ok
     else
-      {:error, :invalid_signature}
+      _no_match -> {:error, :invalid_signature}
     end
   end
 

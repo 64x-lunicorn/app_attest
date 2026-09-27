@@ -16,9 +16,10 @@ defmodule AppAttest.IntegrationTest do
       object, the `client_data` the device signed over, the App ID, the
       stored `AppAttest.Device` and the environment the caller expects;
       returns the Device with its Counter moved on.
-    * `AppAttest.RiskMetric.fetch/5` - the Device's current receipt, its
-      environment, the DeviceCheck key, the trusted root and an
-      `opts[:transport]` seam standing in for Apple's own endpoint.
+    * `AppAttest.RiskMetric.fetch/4` - the stored `AppAttest.Device`, the
+      DeviceCheck key, the trusted root and an `opts[:transport]` seam
+      standing in for Apple's own endpoint; returns the Device with its
+      Receipt moved on, alongside the risk metric.
 
   Its data comes from `AppAttest.Fixtures` (`test/support/`). The
   Attestation is a real, Apple-issued development Attestation, reused under
@@ -27,8 +28,12 @@ defmodule AppAttest.IntegrationTest do
   Attestations Apple actually issued, not only against self-generated
   data." That rule names Attestations only, so the device key
   pair (`AppAttest.Fixtures.device_key_pair/0`), the Assertions
-  (`AppAttest.Fixtures.assertion/4`) and the receipts
-  (`AppAttest.Fixtures.receipt/2`) are self-generated. Every rejection
+  (`AppAttest.Fixtures.assertion/5`) and the receipts
+  (`AppAttest.Fixtures.receipt/2`) are self-generated, and so is the one
+  Attestation the Risk metric scenario hands its Device on from
+  (`AppAttest.Fixtures.self_generated_attestation/1`), because only the
+  device holding its private key can sign the Assertions that follow it.
+  Every rejection
   scenario changes one input at a time against otherwise valid data, so it
   fails for that one reason, per the domain rule "Every rejection case is
   deliberately constructed and tested, not left to accident."
@@ -141,7 +146,7 @@ defmodule AppAttest.IntegrationTest do
                  client_data,
                  @app_id,
                  device,
-                 device.environment
+                 :development
                )
     end
 
@@ -156,7 +161,7 @@ defmodule AppAttest.IntegrationTest do
                  client_data,
                  @app_id,
                  device,
-                 device.environment
+                 :development
                )
     end
 
@@ -171,7 +176,7 @@ defmodule AppAttest.IntegrationTest do
                  client_data,
                  "a-different-app-id",
                  device,
-                 device.environment
+                 :development
                )
     end
 
@@ -192,7 +197,7 @@ defmodule AppAttest.IntegrationTest do
                  "a-different-client-data",
                  @app_id,
                  device,
-                 device.environment
+                 :development
                )
     end
   end
@@ -237,38 +242,60 @@ defmodule AppAttest.IntegrationTest do
 
   describe "Risk metric" do
     test "The risk metric never changes a validation outcome" do
-      {private_key, device} = stored_device(41)
+      # One Device, handed from Attestation to Assertion to Risk metric and
+      # back to Assertion exactly as each returned it, the way a caller
+      # stores and passes it on: never unpacked, never patched by hand.
+      # The Attestation is self-generated, since only the device holding
+      # its private key can sign the Assertions that follow.
+      attestation = AppAttest.Fixtures.self_generated_attestation(app_id: @app_id)
       client_data = AppAttest.Fixtures.client_data()
-      assertion = AppAttest.Fixtures.assertion(42, @app_id, client_data, private_key)
 
-      # A genuine assertion that would otherwise be accepted...
-      assert {:ok, %AppAttest.Device{counter: 42}} =
+      assert {:ok, device} =
+               AppAttest.Attestation.validate(
+                 attestation.attestation,
+                 attestation.key_id,
+                 attestation.challenge,
+                 @app_id,
+                 attestation.root,
+                 :development
+               )
+
+      assert {:ok, device} =
                AppAttest.Assertion.validate(
-                 assertion,
+                 AppAttest.Fixtures.assertion(1, @app_id, client_data, attestation.private_key),
                  client_data,
                  @app_id,
                  device,
-                 device.environment
+                 :development
                )
 
-      # ...stays accepted no matter what Apple's risk metric says: fetching
-      # it is a separate call the caller records, never an input to
-      # validate/5. "A high number of distinct devices" is a receipt
-      # fixture carrying that value in Apple's own risk-metric field,
-      # handed back by a stand-in for Apple's own endpoint
-      # (`AppAttest.RiskMetric`'s own `opts[:transport]` seam).
+      # "A high number of distinct devices" is a receipt fixture carrying
+      # that value in Apple's own risk-metric field, handed back by a
+      # stand-in for Apple's own endpoint (`AppAttest.RiskMetric`'s own
+      # `opts[:transport]` seam).
       chain = AppAttest.Fixtures.risk_metric_chain()
       a_high_number_of_distinct_devices = 99
       receipt = AppAttest.Fixtures.receipt(a_high_number_of_distinct_devices, chain)
       transport = fn _request -> {:ok, 200, Base.encode64(receipt)} end
 
-      assert {:ok, %{risk_metric: ^a_high_number_of_distinct_devices}} =
+      assert {:ok, %{device: device, risk_metric: ^a_high_number_of_distinct_devices}} =
                AppAttest.RiskMetric.fetch(
-                 device.receipt,
-                 device.environment,
+                 device,
                  AppAttest.Fixtures.device_check_key(),
                  chain.root,
                  transport: transport
+               )
+
+      # The next genuine Assertion stays accepted no matter what Apple's
+      # risk metric says: the risk metric is recorded, never an input to
+      # validate/5 (Corridor ADR 0007).
+      assert {:ok, %AppAttest.Device{counter: 2}} =
+               AppAttest.Assertion.validate(
+                 AppAttest.Fixtures.assertion(2, @app_id, client_data, attestation.private_key),
+                 client_data,
+                 @app_id,
+                 device,
+                 :development
                )
     end
   end
@@ -284,7 +311,7 @@ defmodule AppAttest.IntegrationTest do
       # Attestation ones deliberately mismatch one real Attestation's
       # challenge, Key ID, App ID or trusted root at a time;
       # the two Assertion ones are self-generated
-      # (`AppAttest.Fixtures.assertion/4`).
+      # (`AppAttest.Fixtures.assertion/5`).
       results = %{
         untrusted_root:
           AppAttest.Attestation.validate(
@@ -325,7 +352,7 @@ defmodule AppAttest.IntegrationTest do
         counter_not_increasing:
           AppAttest.Assertion.validate(
             AppAttest.Fixtures.assertion(
-              device.counter,
+              41,
               @app_id,
               client_data,
               private_key
@@ -333,12 +360,12 @@ defmodule AppAttest.IntegrationTest do
             client_data,
             @app_id,
             device,
-            device.environment
+            :development
           ),
         invalid_signature:
           AppAttest.Assertion.validate(
             AppAttest.Fixtures.assertion(
-              device.counter + 1,
+              42,
               @app_id,
               client_data,
               wrong_private_key
@@ -346,7 +373,7 @@ defmodule AppAttest.IntegrationTest do
             client_data,
             @app_id,
             device,
-            device.environment
+            :development
           )
       }
 

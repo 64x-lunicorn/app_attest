@@ -1,28 +1,29 @@
 defmodule AppAttest.AuthenticatorData do
-  @moduledoc """
-  Parses the authenticator data Apple embeds in both an Attestation and an
-  Assertion.
+  @moduledoc false
 
-  Every authenticator data value starts with the same 37-byte prefix: the
-  App ID hash, a flags byte and the Counter. An Attestation's authenticator
-  data is the structural superset — it additionally carries attested
-  credential data (an aaguid and a credential ID) that identifies the newly
-  attested key. `parse/1` handles both shapes: the attested-credential-data
-  fields come back `nil` when the input is only the 37-byte prefix, the
-  shape an Assertion carries.
+  # Parses the authenticator data Apple embeds in both an Attestation and an
+  # Assertion, behind `AppAttest.Attestation` and `AppAttest.Assertion`; no
+  # caller of the library names this module, which is why the environment
+  # type lives on `AppAttest.Device`.
+  #
+  # Every authenticator data value starts with the same 37-byte prefix: the
+  # App ID hash, a flags byte and the Counter. An Attestation's
+  # authenticator data is the structural superset — it additionally carries
+  # attested credential data (an aaguid and a credential ID) that
+  # identifies the newly attested key. `parse/1` handles both shapes: the
+  # attested-credential-data fields come back `nil` when the input is only
+  # the 37-byte prefix, the shape an Assertion carries.
+  #
+  # Apple's App Attest attested credential data also carries the device's
+  # public key, COSE-encoded, after the credential ID. This module does not
+  # decode it: `AppAttest.Attestation` reads the same public key straight
+  # off the credential certificate instead (as the reference
+  # implementations takimoto3/app-attest and uebelack/node-app-attest both
+  # do), so nothing here needs those trailing bytes.
 
-  Apple's App Attest attested credential data also carries the device's
-  public key, COSE-encoded, after the credential ID. This module does not
-  decode it: `AppAttest.Attestation` reads the same public key straight off
-  the credential certificate instead (as the reference implementations
-  takimoto3/app-attest and uebelack/node-app-attest both do), so nothing
-  here needs those trailing bytes.
-  """
+  alias AppAttest.Device
 
-  defstruct [:app_id_hash, :flags, :counter, :aaguid, :credential_id]
-
-  @typedoc "Which App Attest environment a device was attested in."
-  @type environment :: :development | :production
+  defstruct [:app_id_hash, :flags, :counter, :environment, :credential_id]
 
   # Apple's own two fixed aaguid values (confirmed against Apple's
   # "Validating apps that connect to your server" and the reference
@@ -31,31 +32,29 @@ defmodule AppAttest.AuthenticatorData do
   @aaguid_development "appattestdevelop"
   @aaguid_production "appattest" <> <<0, 0, 0, 0, 0, 0, 0>>
 
-  @typedoc """
-  * `:app_id_hash` - SHA-256 of the app's App ID; called `rpIdHash` in
-    Apple's own wire format, renamed here to the Spec's own term.
-  * `:flags` - the raw flags byte.
-  * `:counter` - the signature Counter.
-  * `:aaguid` - 16 bytes identifying development vs production; `nil`
-    when this authenticator data carries no attested credential data.
-  * `:credential_id` - the attested key's ID; `nil` for the same reason.
-  """
+  # * `:app_id_hash` - SHA-256 of the app's App ID; called `rpIdHash` in
+  #   Apple's own wire format, renamed here to the Spec's own term.
+  # * `:flags` - the raw flags byte.
+  # * `:counter` - the signature Counter.
+  # * `:environment` - the environment the aaguid names; `nil` when this
+  #   authenticator data carries no attested credential data, or an aaguid
+  #   that is neither of Apple's two values.
+  # * `:credential_id` - the attested key's ID; `nil` when this
+  #   authenticator data carries no attested credential data.
   @type t :: %__MODULE__{
           app_id_hash: binary(),
           flags: byte(),
           counter: non_neg_integer(),
-          aaguid: binary() | nil,
+          environment: Device.environment() | nil,
           credential_id: binary() | nil
         }
 
-  @doc """
-  Parses raw authenticator data into its fields.
-
-  Fails with `:invalid_authenticator_data` when `data` is shorter than the
-  fixed 37-byte prefix, or carries a truncated attested credential data
-  (a credential ID length that its own remaining bytes cannot satisfy).
-  """
-  @spec parse(binary()) :: {:ok, t()} | {:error, :invalid_authenticator_data}
+  # Parses raw authenticator data into its fields. Fails with this module's
+  # own `:truncated`, which its callers translate at their seam, when `data` is shorter than the fixed
+  # 37-byte prefix, or carries a truncated attested credential data (a
+  # credential ID length that its own remaining bytes cannot satisfy).
+  @doc false
+  @spec parse(binary()) :: {:ok, t()} | {:error, :truncated}
   def parse(<<app_id_hash::binary-size(32), flags::8, counter::32-big, rest::binary>>) do
     case parse_attested_credential_data(rest) do
       {:ok, aaguid, credential_id} ->
@@ -64,7 +63,7 @@ defmodule AppAttest.AuthenticatorData do
            app_id_hash: app_id_hash,
            flags: flags,
            counter: counter,
-           aaguid: aaguid,
+           environment: environment(aaguid),
            credential_id: credential_id
          }}
 
@@ -72,64 +71,49 @@ defmodule AppAttest.AuthenticatorData do
         {:ok, %__MODULE__{app_id_hash: app_id_hash, flags: flags, counter: counter}}
 
       :error ->
-        {:error, :invalid_authenticator_data}
+        {:error, :truncated}
     end
   end
 
-  def parse(_too_short), do: {:error, :invalid_authenticator_data}
+  def parse(_too_short), do: {:error, :truncated}
 
-  @doc """
-  Checks `authenticator_data`'s App ID hash against `app_id`
-  (`"<Team ID>.<bundle ID>"`), the check both `AppAttest.Attestation` and
-  `AppAttest.Assertion` make identically, kept in one place so the two
-  cannot drift apart.
-  """
-  @spec check_app_id(t(), String.t()) :: :ok | {:error, :app_id_mismatch}
-  def check_app_id(authenticator_data, app_id) do
-    if app_id_matches?(authenticator_data, app_id) do
+  # Checks `authenticator_data`'s App ID hash against `app_id`
+  # (`"<Team ID>.<bundle ID>"`), the check both `AppAttest.Attestation` and
+  # `AppAttest.Assertion` make identically, kept in one place so the two
+  # cannot drift apart. Fails with this module's own `:other_app_id`, which
+  # its callers translate at their seam.
+  @doc false
+  @spec check_app_id(t(), String.t()) :: :ok | {:error, :other_app_id}
+  def check_app_id(%__MODULE__{app_id_hash: app_id_hash}, app_id) do
+    if app_id_hash == :crypto.hash(:sha256, app_id) do
       :ok
     else
-      {:error, :app_id_mismatch}
+      {:error, :other_app_id}
     end
   end
 
-  @doc """
-  Apple's own nonce construction, the one both an Attestation and an
-  Assertion are bound to (confirmed against "Validating apps that connect
-  to your server" and the reference implementations
-  takimoto3/app-attest and uebelack/node-app-attest, which both build and
-  verify it this same way): hash `client_data` to get clientDataHash,
-  append it to the raw authenticator data, and hash the result again.
-
-  An Attestation's `client_data` is the one-time server challenge the
-  device attested, carried in the credential certificate's own nonce
-  extension; an Assertion's is the request-specific data the caller asked
-  the device to sign, and the nonce is what its signature covers. Built
-  here once for `AppAttest.Attestation` and `AppAttest.Assertion` alike, so
-  the two cannot build it differently.
-  """
+  # Apple's own nonce construction, the one both an Attestation and an
+  # Assertion are bound to (confirmed against "Validating apps that connect
+  # to your server" and the reference implementations
+  # takimoto3/app-attest and uebelack/node-app-attest, which both build and
+  # verify it this same way): hash `client_data` to get clientDataHash,
+  # append it to the raw authenticator data, and hash the result again.
+  #
+  # An Attestation's `client_data` is the one-time server challenge the
+  # device attested, carried in the credential certificate's own nonce
+  # extension; an Assertion's is the request-specific data the caller asked
+  # the device to sign, and the nonce is what its signature covers. Built
+  # here once for `AppAttest.Attestation` and `AppAttest.Assertion` alike,
+  # so the two cannot build it differently.
+  @doc false
   @spec nonce(binary(), binary()) :: binary()
   def nonce(auth_data, client_data) do
     :crypto.hash(:sha256, auth_data <> :crypto.hash(:sha256, client_data))
   end
 
-  @doc """
-  The App Attest environment identified by `aaguid`, as carried in an
-  Attestation's `attestedCredentialData`: `:development` for
-  `"appattestdevelop"`, `:production` for `"appattest"` padded with seven
-  0x00 bytes — Apple's own two fixed values, nothing else. Anything else,
-  including `nil` (no attested credential data at all), is rejected rather
-  than raising, so a malformed or forged aaguid cannot crash a caller such
-  as `AppAttest.Attestation.validate/6`.
-  """
-  @spec environment(binary() | nil) :: environment() | {:error, :unrecognized_environment}
-  def environment(@aaguid_development), do: :development
-  def environment(@aaguid_production), do: :production
-  def environment(_other), do: {:error, :unrecognized_environment}
-
-  defp app_id_matches?(%__MODULE__{app_id_hash: app_id_hash}, app_id) do
-    app_id_hash == :crypto.hash(:sha256, app_id)
-  end
+  defp environment(@aaguid_development), do: :development
+  defp environment(@aaguid_production), do: :production
+  defp environment(_neither), do: nil
 
   defp parse_attested_credential_data(<<>>), do: :none
 
