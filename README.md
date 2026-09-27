@@ -54,11 +54,12 @@ iOS app --assertion----> your server --> AppAttest.Assertion.validate   --> Devi
 Every function takes the state your server stored earlier as input and returns what changed, so storage, timing and refresh stay with the caller.
 
 ```elixir
-root = AppAttest.RootCertificate.default()
+# Apple's two roots, for every operation that checks a signature chain.
+trust = AppAttest.Trust.apple()
 
 # Once per key: validate the Attestation and store the Device it returns.
 {:ok, device} =
-  AppAttest.Attestation.validate(attestation_object, key_id, challenge, app_id, root, :production)
+  AppAttest.Attestation.validate(attestation_object, key_id, challenge, app_id, trust, :production)
 
 # Per request: validate the Assertion and store the Device with its new Counter.
 {:ok, device} =
@@ -66,7 +67,7 @@ root = AppAttest.RootCertificate.default()
 
 # Now and then: record the Risk metric and store the Device with its new Receipt.
 {:ok, %{device: device, risk_metric: risk_metric}} =
-  AppAttest.RiskMetric.fetch(device, device_check_key, AppAttest.RootCertificate.apple_root_ca_g3())
+  AppAttest.RiskMetric.fetch(device, device_check_key, trust)
 ```
 
 ## Quickstart
@@ -108,7 +109,7 @@ Everything about *what* this library does and *why* is tracked on `64x-lunicorn/
 
 | Guide | Start here when you want to... |
 | :--- | :--- |
-| [Terms](CONTEXT.md) | Look up what Attestation, Assertion, Counter, Risk metric, Device, Key ID and Receipt mean here. |
+| [Terms](CONTEXT.md) | Look up what Attestation, Assertion, Counter, Risk metric, Device, Key ID, Receipt and Trust mean here. |
 | [CI/CD](https://github.com/64x-lunicorn/app_attest/blob/main/docs/ci-cd.md) | Understand the gate, run it locally and see the rules on `main`. |
 | [Contributing](https://github.com/64x-lunicorn/app_attest/blob/main/CONTRIBUTING.md) | Set up development, run the checks and submit a focused change. |
 | [Security policy](https://github.com/64x-lunicorn/app_attest/blob/main/SECURITY.md) | Report a vulnerability privately. |

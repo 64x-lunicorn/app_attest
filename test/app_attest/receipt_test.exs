@@ -1,7 +1,7 @@
 defmodule AppAttest.ReceiptTest do
   use ExUnit.Case, async: true
 
-  alias AppAttest.{Fixtures, Receipt, RootCertificate}
+  alias AppAttest.{Fixtures, Receipt, Trust}
 
   describe "verify/2 with the real Apple Receipt inside the fixture Attestation" do
     test "verifies against Apple Root CA - G3 and reads as an ATTEST Receipt without a risk metric" do
@@ -13,12 +13,15 @@ defmodule AppAttest.ReceiptTest do
                 not_before: nil,
                 expiration_time: ~U[2024-05-04 20:27:06.193Z]
               }} =
-               Receipt.verify(Fixtures.attestation_receipt(), RootCertificate.apple_root_ca_g3())
+               Receipt.verify(Fixtures.attestation_receipt(), Trust.apple())
     end
 
     test "does not verify against the App Attest root an Attestation's own chain uses" do
       assert {:error, :untrusted_receipt} =
-               Receipt.verify(Fixtures.attestation_receipt(), RootCertificate.default())
+               Receipt.verify(
+                 Fixtures.attestation_receipt(),
+                 %Trust{Trust.apple() | receipt_root: Trust.apple().app_attest_root}
+               )
     end
 
     # Every prefix of a real Receipt: undecodable at every length, never a raise.
@@ -29,7 +32,7 @@ defmodule AppAttest.ReceiptTest do
         assert {:error, :invalid_receipt} =
                  Receipt.verify(
                    binary_part(receipt, 0, length),
-                   RootCertificate.apple_root_ca_g3()
+                   Trust.apple()
                  )
       end
     end
@@ -41,11 +44,11 @@ defmodule AppAttest.ReceiptTest do
     # of the documented ones.
     test "answers it with any single byte flipped, never raising" do
       receipt = Fixtures.attestation_receipt()
-      root = RootCertificate.apple_root_ca_g3()
-      genuine = Receipt.verify(receipt, root)
+      trust = Trust.apple()
+      genuine = Receipt.verify(receipt, trust)
 
       for position <- 0..(byte_size(receipt) - 1) do
-        assert Receipt.verify(Fixtures.flip_byte(receipt, position), root) in [
+        assert Receipt.verify(Fixtures.flip_byte(receipt, position), trust) in [
                  {:error, :untrusted_receipt},
                  {:error, :invalid_receipt},
                  genuine
@@ -64,14 +67,17 @@ defmodule AppAttest.ReceiptTest do
                 risk_metric: 42,
                 not_before: ~U[2026-01-01 00:00:00Z],
                 expiration_time: ~U[2026-01-08 00:00:00Z]
-              }} = Receipt.verify(Fixtures.receipt(42, chain), chain.root)
+              }} = Receipt.verify(Fixtures.receipt(42, chain), chain.trust)
     end
 
     test "rejects a Receipt whose chain does not lead to the given root" do
       chain = Fixtures.risk_metric_chain()
 
       assert {:error, :untrusted_receipt} =
-               Receipt.verify(Fixtures.receipt(1, chain), Fixtures.untrusted_root())
+               Receipt.verify(
+                 Fixtures.receipt(1, chain),
+                 %Trust{Trust.apple() | receipt_root: Fixtures.untrusted_root()}
+               )
     end
 
     test "rejects a Receipt whose signed content was tampered with" do
@@ -83,17 +89,17 @@ defmodule AppAttest.ReceiptTest do
       # about one run in 256 and leave the Receipt genuine.
       tampered = Fixtures.flip_byte(receipt, byte_size(receipt) - 1)
 
-      assert {:error, :untrusted_receipt} = Receipt.verify(tampered, chain.root)
+      assert {:error, :untrusted_receipt} = Receipt.verify(tampered, chain.trust)
     end
 
     test "rejects bytes that are not a Receipt at all" do
       assert {:error, :invalid_receipt} =
-               Receipt.verify("not a receipt", Fixtures.risk_metric_chain().root)
+               Receipt.verify("not a receipt", Fixtures.risk_metric_chain().trust)
     end
 
     test "rejects something that is not bytes at all, never raising" do
       assert {:error, :invalid_receipt} =
-               Receipt.verify(nil, Fixtures.risk_metric_chain().root)
+               Receipt.verify(nil, Fixtures.risk_metric_chain().trust)
     end
 
     # A Receipt signed correctly whose fields are still not something this
@@ -121,7 +127,7 @@ defmodule AppAttest.ReceiptTest do
         chain = Fixtures.risk_metric_chain()
         receipt = Fixtures.receipt_with_attributes(chain, unquote(Macro.escape(attributes)))
 
-        assert {:error, :invalid_receipt} = Receipt.verify(receipt, chain.root)
+        assert {:error, :invalid_receipt} = Receipt.verify(receipt, chain.trust)
       end
     end
 
@@ -138,7 +144,7 @@ defmodule AppAttest.ReceiptTest do
         chain = Fixtures.risk_metric_chain()
         receipt = Fixtures.receipt_with_payload(chain, unquote(payload))
 
-        assert {:error, :invalid_receipt} = Receipt.verify(receipt, chain.root)
+        assert {:error, :invalid_receipt} = Receipt.verify(receipt, chain.trust)
       end
     end
   end

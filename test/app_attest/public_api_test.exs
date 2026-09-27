@@ -24,22 +24,25 @@ defmodule AppAttest.PublicApiTest do
   end
 
   describe "documented modules" do
-    test "are Attestation, Assertion, RiskMetric, Receipt, RootCertificate and Device only" do
+    test "are Attestation, Assertion, RiskMetric, Receipt, Trust and Device only" do
       assert Enum.sort(documented_modules()) ==
                Enum.sort([
                  AppAttest.Attestation,
                  AppAttest.Assertion,
                  AppAttest.RiskMetric,
                  AppAttest.Receipt,
-                 AppAttest.RootCertificate,
+                 AppAttest.Trust,
                  AppAttest.Device
                ])
     end
 
-    test "name the authenticator data module in none of their typespecs" do
+    test "name no hidden module in any of their typespecs" do
+      hidden = library_modules() -- documented_modules()
+
       for module <- documented_modules() do
-        refute AppAttest.AuthenticatorData in referenced_modules(module),
-               "#{inspect(module)} references AppAttest.AuthenticatorData in a typespec"
+        named = Enum.filter(referenced_modules(module), &(&1 in hidden))
+
+        assert named == [], "#{inspect(module)} names #{inspect(named)} in a typespec"
       end
     end
   end

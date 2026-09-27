@@ -16,14 +16,13 @@ defmodule AppAttest.RiskMetric do
   on its own.
 
   The new receipt is verified and read by `AppAttest.Receipt.verify/2`
-  against Apple's general-purpose "Apple Root CA - G3"
-  (`AppAttest.RootCertificate.apple_root_ca_g3/0`), not the App
-  Attest-specific root an Attestation's own chain uses
-  (`AppAttest.RootCertificate.default/0`): the real, Apple-issued Receipt
-  inside the fixture Attestation chains to Apple Root CA - G3 and not to
-  the App Attest root (`AppAttest.ReceiptTest`,
-  64x-lunicorn/app_attest#23). `root` stays an explicit parameter all the
-  same. Only a Receipt of type `RECEIPT` carrying the risk metric and both
+  against the Receipt root of the caller's `AppAttest.Trust`, Apple's
+  general-purpose "Apple Root CA - G3" in `AppAttest.Trust.apple/0`, not
+  the App Attest-specific root an Attestation's own chain uses: the real,
+  Apple-issued Receipt inside the fixture Attestation chains to Apple Root
+  CA - G3 and not to the App Attest root (`AppAttest.ReceiptTest`,
+  64x-lunicorn/app_attest#23). The Trust stays an explicit parameter all
+  the same. Only a Receipt of type `RECEIPT` carrying the risk metric and both
   validity dates answers this request; any other verified Receipt is
   `:invalid_receipt`.
 
@@ -34,11 +33,11 @@ defmodule AppAttest.RiskMetric do
   between the two.
   """
 
-  alias AppAttest.{Device, Receipt, RootCertificate}
+  alias AppAttest.{Device, DeviceCheckToken, Receipt, Trust}
 
   @typedoc """
   The Apple DeviceCheck key that authenticates this request to Apple: an
-  explicit parameter, like `AppAttest.RootCertificate`'s own root, never
+  explicit parameter, like `AppAttest.Trust`, never
   `Application` config or a compile-time flag.
 
     * `:key_id` - the 10-character DeviceCheck key identifier Apple
@@ -77,7 +76,7 @@ defmodule AppAttest.RiskMetric do
 
   @typedoc """
   * `:untrusted_receipt` - the receipt's signature, or its certificate
-    chain against `root`, does not verify.
+    chain against the Receipt root of `trust`, does not verify.
   * `:invalid_receipt` - Apple's response is not base64, or not a
     well-formed CMS-signed receipt of type `RECEIPT` carrying a risk metric
     and both validity dates.
@@ -104,17 +103,13 @@ defmodule AppAttest.RiskMetric do
   @development_host ~c"https://data-development.appattest.apple.com"
   @path ~c"/v1/attestationData"
 
-  # RFC 7518 section 3.4: JWS ES256 wants the signature as a fixed-width
-  # r||s pair, one P-256 field element (32 bytes) each.
-  @p256_coordinate_size 32
-
   @doc """
   Sends `device`'s current `receipt` to Apple's risk-metric endpoint for
   its `environment`, authenticated with `device_check_key`, and
-  verifies the new receipt Apple returns against `root` —
-  `AppAttest.RootCertificate.apple_root_ca_g3/0` in production, the root a
-  real Apple Receipt chains to; a test substitutes its own, the same way `AppAttest.Attestation.validate/6`
-  takes its own root explicitly.
+  verifies the new receipt Apple returns against the Receipt root of
+  `trust` — `AppAttest.Trust.apple/0` in production, whose Receipt root is
+  the one a real Apple Receipt chains to; a test substitutes its own, the
+  same `AppAttest.Trust` that `AppAttest.Attestation.validate/6` takes.
 
   `opts[:transport]` replaces the real HTTP call to Apple with a stand-in,
   this module's only system boundary; every real caller omits it and gets
@@ -130,27 +125,27 @@ defmodule AppAttest.RiskMetric do
   @spec fetch(
           Device.t(),
           device_check_key(),
-          RootCertificate.der(),
+          Trust.t(),
           transport: transport()
         ) :: {:ok, result()} | {:error, rejection()}
   def fetch(
         %Device{receipt: receipt, environment: environment} = device,
         device_check_key,
-        root,
+        %Trust{} = trust,
         opts \\ []
       ) do
     transport = Keyword.get(opts, :transport, &http_request/1)
 
     request = %{
       url: host(environment) ++ @path,
-      authorization: jwt(device_check_key),
+      authorization: DeviceCheckToken.build(device_check_key, System.system_time(:second)),
       body: Base.encode64(receipt)
     }
 
     case transport.(request) do
       {:ok, 200, body} ->
         with {:ok, new_receipt} <- decode_base64(body),
-             {:ok, verified} <- verify_receipt(new_receipt, root) do
+             {:ok, verified} <- verify_receipt(new_receipt, trust) do
           risk_metric_fields(verified, %Device{device | receipt: new_receipt})
         end
 
@@ -164,10 +159,10 @@ defmodule AppAttest.RiskMetric do
 
   # Receipt's own reasons are translated here, at this seam, so every atom
   # of `rejection/0` is minted in this module, as `AppAttest.Attestation`
-  # does with `AppAttest.RootCertificate`'s. Each keeps its meaning: the
-  # new receipt does not verify, or is not a well-formed Receipt.
-  defp verify_receipt(receipt, root) do
-    case Receipt.verify(receipt, root) do
+  # does with its certificate chain's. Each keeps its meaning: the new
+  # receipt does not verify, or is not a well-formed Receipt.
+  defp verify_receipt(receipt, trust) do
+    case Receipt.verify(receipt, trust) do
       {:ok, verified} -> {:ok, verified}
       {:error, :untrusted_receipt} -> {:error, :untrusted_receipt}
       {:error, :invalid_receipt} -> {:error, :invalid_receipt}
@@ -226,45 +221,5 @@ defmodule AppAttest.RiskMetric do
       {:error, reason} ->
         {:error, reason}
     end
-  end
-
-  ## JWT (APNs-style provider token): Apple's own "Assessing fraud risk"
-  ## guide points to the identical Apple Push Notification service token
-  ## procedure — ES256, header `{alg, kid}`, claims `{iss, iat}` — confirmed
-  ## against the reference implementation takimoto3/appleapi-core's `token`
-  ## package for the header and claim shape. The `kid` is the DeviceCheck
-  ## key identifier, not a device's Key ID.
-
-  defp jwt(%{key_id: key_id, team_id: team_id, private_key: private_key}) do
-    header = json_base64(%{"alg" => "ES256", "kid" => key_id})
-    claims = json_base64(%{"iss" => team_id, "iat" => System.system_time(:second)})
-    signing_input = header <> "." <> claims
-
-    signature =
-      signing_input
-      |> :public_key.sign(:sha256, private_key)
-      |> der_signature_to_raw()
-      |> Base.url_encode64(padding: false)
-
-    signing_input <> "." <> signature
-  end
-
-  defp json_base64(map) do
-    map |> :json.encode() |> IO.iodata_to_binary() |> Base.url_encode64(padding: false)
-  end
-
-  # :public_key.sign/3 returns a DER `Dss-Sig-Value` SEQUENCE{r, s} (the
-  # same structure DSA and ECDSA signatures both use); JWS ES256 wants the
-  # raw, fixed-width pair instead (RFC 7518 section 3.4) — the same
-  # conversion the reference implementation takimoto3/appleapi-core's
-  # `SignerECDSA.Sign` performs by hand.
-  defp der_signature_to_raw(der_signature) do
-    {:"Dss-Sig-Value", r, s} = :public_key.der_decode(:"Dss-Sig-Value", der_signature)
-    pad_to_coordinate_size(r) <> pad_to_coordinate_size(s)
-  end
-
-  defp pad_to_coordinate_size(integer) do
-    bytes = :binary.encode_unsigned(integer)
-    :binary.copy(<<0>>, @p256_coordinate_size - byte_size(bytes)) <> bytes
   end
 end

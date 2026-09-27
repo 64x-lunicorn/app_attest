@@ -1,10 +1,11 @@
 defmodule AppAttest.Attestation do
   @moduledoc """
   Validates a device's App Attest Attestation: its certificate chain
-  against Apple's own App Attest root, its nonce against the expected
-  challenge, its public key and credential ID against the app-supplied Key
-  ID, its App ID hash against the expected app, its start Counter of 0, and
-  its environment against the one the caller expects.
+  against the App Attest root of the caller's `AppAttest.Trust`, its nonce
+  against the expected challenge, its public key and credential ID against
+  the app-supplied Key ID, its App ID hash against the expected app, its
+  start Counter of 0, and its environment against the one the caller
+  expects.
 
   `app_attest` holds no device state itself (Corridor ADR 0006), because
   storage belongs to the consuming server: `validate/6` returns an `AppAttest.Device` with the
@@ -12,7 +13,7 @@ defmodule AppAttest.Attestation do
   for the caller to persist; it persists nothing on its own.
   """
 
-  alias AppAttest.{AuthenticatorData, Device, Envelope, RootCertificate}
+  alias AppAttest.{AuthenticatorData, Device, Envelope, RootCertificate, Trust}
 
   @typedoc """
   Every reason `validate/6` rejects an Attestation. A malformed Attestation
@@ -27,9 +28,9 @@ defmodule AppAttest.Attestation do
     not a CBOR byte string. Which CBOR decoding failure it was
     is deliberately not told apart, so no atom of the `cbor` package
     reaches a caller.
-  * `:untrusted_root` - the certificate chain does not lead to `root`,
-    including a `root` that is not a DER certificate at all: no chain
-    leads to it.
+  * `:untrusted_root` - the certificate chain does not lead to the App
+    Attest root of `trust`, including one that is not a DER certificate at
+    all: no chain leads to it.
   * `:nonce_mismatch` - the nonce does not match `challenge`.
   * `:key_id_mismatch` - `key_id` does not identify this Attestation's key:
     the SHA-256 of the credential certificate's public key, or the
@@ -68,8 +69,8 @@ defmodule AppAttest.Attestation do
   @doc """
   Validates `attestation_object` — the raw, CBOR-encoded attestation Apple's
   SDK produces — against `challenge` (the one-time server challenge the
-  device attested), `app_id` (`"<Team ID>.<bundle ID>"`) and `root` (Apple's
-  App Attest root, or a substitute — `AppAttest.RootCertificate`, never
+  device attested), `app_id` (`"<Team ID>.<bundle ID>"`) and the App Attest
+  root of `trust` (`AppAttest.Trust.apple/0`, or a substitute — never
   `Application` config), and binds it to `key_id`, the Key ID the app got
   from `DCAppAttestService.generateKey`, base64-encoded as Apple's SDK
   returns it, and to `expected_environment`, the App Attest environment
@@ -97,10 +98,17 @@ defmodule AppAttest.Attestation do
           String.t(),
           binary(),
           String.t(),
-          RootCertificate.der(),
+          Trust.t(),
           Device.environment()
         ) :: {:ok, Device.t()} | {:error, rejection()}
-  def validate(attestation_object, key_id, challenge, app_id, root, expected_environment) do
+  def validate(
+        attestation_object,
+        key_id,
+        challenge,
+        app_id,
+        %Trust{app_attest_root: root},
+        expected_environment
+      ) do
     with {:ok, %{auth_data: auth_data, chain: chain, receipt: receipt}} <-
            decode(attestation_object),
          {:ok, leaf} <- check_trusted_chain(root, chain),
