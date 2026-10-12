@@ -15,8 +15,8 @@ defmodule AppAttest.AuthenticatorData do
   # credential data, but a real device appends extension data (a CBOR map)
   # after the prefix and sets the flags' attested-credential-data bit all
   # the same (#41), so neither the length nor the flags say what follows:
-  # `parse_prefix/1` reads only the prefix and ignores the rest, which the
-  # Assertion's signature still covers.
+  # `parse_prefix/1` reads only the prefix and hands back the rest
+  # unparsed, which an Assertion ignores and its signature still covers.
   #
   # Apple's App Attest attested credential data also carries the device's
   # public key, COSE-encoded, after the credential ID. This module does not
@@ -35,9 +35,6 @@ defmodule AppAttest.AuthenticatorData do
   # literal string below or "appattest" padded with seven 0x00 bytes.
   @aaguid_development "appattestdevelop"
   @aaguid_production "appattest" <> <<0, 0, 0, 0, 0, 0, 0>>
-
-  # The App ID hash (32 bytes), the flags byte and the 4-byte Counter.
-  @prefix_size 37
 
   # * `:app_id_hash` - SHA-256 of the app's App ID; called `rpIdHash` in
   #   Apple's own wire format, renamed here to the Spec's own term.
@@ -65,9 +62,7 @@ defmodule AppAttest.AuthenticatorData do
   @doc false
   @spec parse(binary()) :: {:ok, t()} | {:error, :truncated}
   def parse(data) do
-    with {:ok, prefix} <- parse_prefix(data) do
-      <<_prefix::binary-size(@prefix_size), rest::binary>> = data
-
+    with {:ok, prefix, rest} <- parse_prefix(data) do
       case parse_attested_credential_data(rest) do
         {:ok, aaguid, credential_id} ->
           {:ok,
@@ -82,15 +77,16 @@ defmodule AppAttest.AuthenticatorData do
     end
   end
 
-  # Parses only the 37-byte prefix of raw authenticator data, ignoring
-  # whatever follows it: what an Assertion's authenticator data is read
-  # with. The attested-credential-data fields always come back `nil`.
-  # Fails with `:truncated`, like `parse/1`, when `data` is shorter than the
-  # prefix.
+  # Parses only the 37-byte prefix of raw authenticator data (the App ID
+  # hash, the flags byte and the 4-byte Counter), the one place that prefix
+  # is matched, and hands back whatever follows it unparsed: `parse/1`
+  # reads that as attested credential data, an Assertion ignores it. The
+  # attested-credential-data fields always come back `nil`. Fails with
+  # `:truncated`, like `parse/1`, when `data` is shorter than the prefix.
   @doc false
-  @spec parse_prefix(binary()) :: {:ok, t()} | {:error, :truncated}
-  def parse_prefix(<<app_id_hash::binary-size(32), flags::8, counter::32-big, _rest::binary>>) do
-    {:ok, %__MODULE__{app_id_hash: app_id_hash, flags: flags, counter: counter}}
+  @spec parse_prefix(binary()) :: {:ok, t(), rest :: binary()} | {:error, :truncated}
+  def parse_prefix(<<app_id_hash::binary-size(32), flags::8, counter::32-big, rest::binary>>) do
+    {:ok, %__MODULE__{app_id_hash: app_id_hash, flags: flags, counter: counter}, rest}
   end
 
   def parse_prefix(_too_short), do: {:error, :truncated}

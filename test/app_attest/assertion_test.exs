@@ -72,6 +72,56 @@ defmodule AppAttest.AssertionTest do
     end
   end
 
+  describe "validate/5 with a self-generated Assertion carrying extension data" do
+    # What a real device does (#41), independently of its bytes: a CBOR map
+    # after the 37-byte prefix, and the flags' attested-credential-data bit
+    # set although no attested credential data follows.
+    @extension_opts [
+      flags: 0x40,
+      extension_data: CBOR.encode(%{"extension" => Fixtures.cbor_bytes("self-generated")})
+    ]
+
+    test "accepts it with its own Counter" do
+      {private_key, public_key} = Fixtures.device_key_pair()
+      client_data = Fixtures.client_data()
+      assertion_object = Fixtures.assertion(7, @app_id, client_data, private_key, @extension_opts)
+
+      assert {:ok, %Device{counter: 7}} =
+               Assertion.validate(
+                 assertion_object,
+                 client_data,
+                 @app_id,
+                 device(public_key, 6),
+                 :development
+               )
+    end
+
+    test "rejects it with one bit of its extension data flipped as an invalid signature" do
+      {private_key, public_key} = Fixtures.device_key_pair()
+      client_data = Fixtures.client_data()
+      auth_data = Fixtures.authenticator_data(@app_id, [counter: 7] ++ @extension_opts)
+      # The last byte lies inside the CBOR map that follows the prefix.
+      flipped = Fixtures.flip_bit(auth_data, byte_size(auth_data) - 1)
+
+      assertion_object =
+        Fixtures.assertion(
+          7,
+          @app_id,
+          client_data,
+          private_key,
+          [authenticator_data: Fixtures.cbor_bytes(flipped)] ++ @extension_opts
+        )
+
+      assert Assertion.validate(
+               assertion_object,
+               client_data,
+               @app_id,
+               device(public_key, 6),
+               :development
+             ) == {:error, :invalid_signature}
+    end
+  end
+
   describe "validate/5" do
     test "accepts a genuine Assertion for a Device serialised and read back byte for byte" do
       attestation = Fixtures.self_generated_attestation()
