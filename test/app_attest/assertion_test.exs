@@ -35,6 +35,43 @@ defmodule AppAttest.AssertionTest do
     }
   end
 
+  # The real Assertion's own Device: its public key, a stored Counter and
+  # the production environment it was attested in.
+  defp validate_real(assertion_object, stored_counter) do
+    Assertion.validate(
+      assertion_object,
+      Fixtures.real_assertion_client_data(),
+      Fixtures.real_assertion_app_id(),
+      %Device{
+        public_key: Fixtures.real_assertion_public_key(),
+        counter: stored_counter,
+        environment: :production,
+        receipt: "the-device's-current-receipt"
+      },
+      :production
+    )
+  end
+
+  describe "validate/5 with a real device's Assertion" do
+    test "accepts it, extension data after the 37-byte prefix and all" do
+      assert {:ok, %Device{counter: 2}} = validate_real(Fixtures.real_assertion(), 0)
+    end
+
+    test "rejects it with one bit of its extension data flipped as an invalid signature" do
+      auth_data = Fixtures.real_assertion_authenticator_data()
+      # The last byte lies inside the CBOR extension map that follows the
+      # 37-byte prefix.
+      flipped = Fixtures.flip_bit(auth_data, byte_size(auth_data) - 1)
+
+      assert validate_real(Fixtures.real_assertion_with_authenticator_data(flipped), 0) ==
+               {:error, :invalid_signature}
+    end
+
+    test "rejects it against a stored Counter equal to its own" do
+      assert validate_real(Fixtures.real_assertion(), 2) == {:error, :counter_not_increasing}
+    end
+  end
+
   describe "validate/5" do
     test "accepts a genuine Assertion for a Device serialised and read back byte for byte" do
       attestation = Fixtures.self_generated_attestation()
@@ -159,16 +196,6 @@ defmodule AppAttest.AssertionTest do
     test "rejects authenticator data shorter than its 37-byte prefix" do
       assert validate(
                self_generated_assertion(authenticator_data: Fixtures.cbor_bytes(<<1, 2, 3>>))
-             ) ==
-               {:error, :invalid_authenticator_data}
-    end
-
-    test "rejects authenticator data whose bytes after the prefix are truncated" do
-      # A 16-byte aaguid declaring a 32-byte credentialId it never supplies.
-      truncated = Fixtures.authenticator_data(@app_id) <> "appattestdevelop" <> <<32::16>>
-
-      assert validate(
-               self_generated_assertion(authenticator_data: Fixtures.cbor_bytes(truncated))
              ) ==
                {:error, :invalid_authenticator_data}
     end

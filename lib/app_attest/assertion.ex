@@ -29,8 +29,9 @@ defmodule AppAttest.Assertion do
     CBOR decoding failure it was is deliberately not told apart, so no atom
     of the `cbor` package reaches a caller.
   * `:invalid_authenticator_data` - the authenticator data is shorter than
-    its fixed 37-byte prefix, or what follows the prefix is not
-    well-formed attested credential data.
+    its fixed 37-byte prefix. Whatever follows the prefix, such as the
+    extension data a real device appends, is not parsed; the signature
+    covers it.
   * `:invalid_signature` - the signature does not match the Device's
     `public_key` and `client_data`.
   * `:app_id_mismatch` - the App ID hash does not match `app_id`.
@@ -102,7 +103,7 @@ defmodule AppAttest.Assertion do
   end
 
   defp parse_authenticator_data(auth_data) do
-    case AuthenticatorData.parse(auth_data) do
+    case AuthenticatorData.parse_prefix(auth_data) do
       {:ok, authenticator_data} -> {:ok, authenticator_data}
       {:error, :truncated} -> {:error, :invalid_authenticator_data}
     end
