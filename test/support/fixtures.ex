@@ -4,9 +4,11 @@ defmodule AppAttest.Fixtures do
   development Attestation, reused under MIT license (notice kept, see the
   repository's own `NOTICE` file) from `uebelack/node-app-attest`'s
   `test/fixtures/attestation-development.json`
-  (https://github.com/uebelack/node-app-attest), and builders for
-  self-generated authenticator data, Attestations, Assertions, Receipts
-  and certificate chains, plus one byte-mutation helper (`flip_byte/2`).
+  (https://github.com/uebelack/node-app-attest), a real production
+  Assertion an iPhone produced for Corridor on 2026-10-12 (#41), and
+  builders for self-generated authenticator data, Attestations,
+  Assertions, Receipts and certificate chains, plus two byte-mutation
+  helpers (`flip_byte/2`, `flip_bit/2`).
 
   The domain rule of Spec 64x-lunicorn/Corridor#166 "Validation is trusted
   only once it has been proven against Attestations Apple actually issued,
@@ -18,9 +20,12 @@ defmodule AppAttest.Fixtures do
   specific reason ("Every rejection case is deliberately constructed and
   tested, not left to accident"). A wrong field inside the Attestation
   itself cannot be made in Apple's bytes without breaking its nonce first,
-  so `self_generated_attestation/1` builds those. No real device Assertion
-  is recorded, so `device_key_pair/0` and `assertion/5` build self-signed
-  Assertion data instead.
+  so `self_generated_attestation/1` builds those. The real Assertion
+  proves that a genuine Assertion is accepted as a device really produces
+  it, extension data after the 37-byte prefix included; the Assertion
+  rejection scenarios that need a field the real bytes cannot carry without
+  breaking their signature use `device_key_pair/0` and `assertion/5`, which
+  build self-signed Assertion data instead.
 
   Every builder derives its bytes from Apple's documented formats alone,
   never by calling into the library for the very construction a test
@@ -33,6 +38,15 @@ defmodule AppAttest.Fixtures do
   @external_resource @fixture_path
 
   @fixture @fixture_path |> File.read!() |> :json.decode()
+
+  # Recorded by Corridor's own service from a real iPhone in the production
+  # App Attest environment, every value hex as issue #41 records it. Nothing
+  # in it is secret: the challenge it was signed over has been consumed, and
+  # its client data holds only that challenge and a hash of the request body.
+  @real_assertion_path Path.join(__DIR__, "fixtures/assertion-production.json")
+  @external_resource @real_assertion_path
+
+  @real_assertion @real_assertion_path |> File.read!() |> :json.decode()
 
   # From the same reference repository's test suite, alongside the fixture
   # file: https://github.com/uebelack/node-app-attest/blob/main/test/verifyAttestation.test.js
@@ -142,14 +156,56 @@ defmodule AppAttest.Fixtures do
   end
 
   @doc """
+  The raw, CBOR-encoded Assertion object a real iPhone produced in the
+  production environment. Its authenticator data is 99 bytes: the 37-byte
+  prefix (flags `0xC0`, Counter 2) followed by a CBOR map of extension data.
+  """
+  @spec real_assertion() :: binary()
+  def real_assertion, do: Base.decode16!(@real_assertion["assertion"], case: :lower)
+
+  @doc "The client data the real Assertion was signed over."
+  @spec real_assertion_client_data() :: binary()
+  def real_assertion_client_data, do: Base.decode16!(@real_assertion["clientData"], case: :lower)
+
+  @doc """
+  The public key of the device that signed the real Assertion, the way an
+  `AppAttest.Device` stores it: the DER-encoded SubjectPublicKeyInfo.
+  """
+  @spec real_assertion_public_key() :: binary()
+  def real_assertion_public_key, do: Base.decode16!(@real_assertion["publicKey"], case: :lower)
+
+  @doc "The App ID (`\"<Team ID>.<bundle ID>\"`) the real Assertion was made for."
+  @spec real_assertion_app_id() :: String.t()
+  def real_assertion_app_id, do: @real_assertion["appId"]
+
+  @doc "The raw authenticator data of the real Assertion, read straight out of its CBOR."
+  @spec real_assertion_authenticator_data() :: binary()
+  def real_assertion_authenticator_data,
+    do: unwrap_bytes(real_assertion_map()["authenticatorData"])
+
+  @doc """
+  The real Assertion, byte for byte, except for its authenticator data,
+  replaced by `auth_data`: the genuine signature over different bytes.
+  """
+  @spec real_assertion_with_authenticator_data(binary()) :: binary()
+  def real_assertion_with_authenticator_data(auth_data) do
+    real_assertion_map()
+    |> Map.put("authenticatorData", cbor_bytes(auth_data))
+    |> CBOR.encode()
+  end
+
+  defp real_assertion_map do
+    {:ok, decoded, ""} = CBOR.decode(real_assertion())
+    decoded
+  end
+
+  @doc """
   A freshly self-generated device key pair, standing in for a device's
-  Secure Enclave App Attest key. No real Assertion is recorded (only the
-  Attestation above is): the Spec's domain rule "Validation is trusted only
-  once it has been proven against Attestations Apple actually issued"
-  requires proof against real, Apple-issued data only for Attestations, so an
-  Assertion's "genuine" scenario and its rejection fixtures are self-signed
-  here instead, the same way `untrusted_root/0` self-signs a substitute
-  root.
+  Secure Enclave App Attest key, for the Assertion scenarios the real
+  Assertion (`real_assertion/0`) cannot serve: one field made wrong inside
+  an otherwise genuinely signed Assertion, or a Counter of a test's own
+  choosing. Self-signed here, the same way `untrusted_root/0` self-signs a
+  substitute root.
 
   The public key comes back the way an `AppAttest.Device` stores it: the
   DER-encoded SubjectPublicKeyInfo.
@@ -162,9 +218,8 @@ defmodule AppAttest.Fixtures do
 
   @doc """
   A self-generated clientData value standing in for the request-specific
-  data a real caller would hash and ask the device to sign (no real device
-  Assertion is recorded, matching `device_key_pair/0` and `assertion/4`
-  below).
+  data a real caller would hash and ask the device to sign, matching
+  `device_key_pair/0` and `assertion/5` below.
   """
   @spec client_data() :: binary()
   def client_data, do: "self-generated-client-data"
@@ -212,7 +267,9 @@ defmodule AppAttest.Fixtures do
   (SHA-256 of the App ID, one flags byte, a 4-byte big-endian Counter),
   followed by attested credential data (a 16-byte aaguid, a 2-byte
   credentialId length and the credentialId) when `:attested_credential` is
-  given, as an Attestation carries it; an Assertion carries the prefix only.
+  given, as an Attestation carries it; a self-generated Assertion carries
+  the prefix only (a real one appends extension data, see
+  `real_assertion/0`).
 
   Options:
 
@@ -357,9 +414,18 @@ defmodule AppAttest.Fixtures do
   it always differs from the original, whatever the original byte was.
   """
   @spec flip_byte(binary(), non_neg_integer()) :: binary()
-  def flip_byte(binary, position) do
+  def flip_byte(binary, position), do: xor_byte(binary, position, 0xFF)
+
+  @doc """
+  `binary` with only the lowest bit of the byte at zero-based `position`
+  flipped (XOR 0x01): the smallest change there is.
+  """
+  @spec flip_bit(binary(), non_neg_integer()) :: binary()
+  def flip_bit(binary, position), do: xor_byte(binary, position, 0x01)
+
+  defp xor_byte(binary, position, mask) do
     <<before::binary-size(^position), byte, rest::binary>> = binary
-    <<before::binary, Bitwise.bxor(byte, 0xFF), rest::binary>>
+    <<before::binary, Bitwise.bxor(byte, mask), rest::binary>>
   end
 
   # Apple's nonce, from its documented construction ("Validating apps that

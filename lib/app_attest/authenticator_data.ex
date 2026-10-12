@@ -8,11 +8,15 @@ defmodule AppAttest.AuthenticatorData do
   #
   # Every authenticator data value starts with the same 37-byte prefix: the
   # App ID hash, a flags byte and the Counter. An Attestation's
-  # authenticator data is the structural superset — it additionally carries
-  # attested credential data (an aaguid and a credential ID) that
-  # identifies the newly attested key. `parse/1` handles both shapes: the
-  # attested-credential-data fields come back `nil` when the input is only
-  # the 37-byte prefix, the shape an Assertion carries.
+  # authenticator data additionally carries attested credential data (an
+  # aaguid and a credential ID) that identifies the newly attested key;
+  # `parse/1` reads it, its fields coming back `nil` when the input is only
+  # the prefix. An Assertion's authenticator data carries no attested
+  # credential data, but a real device appends extension data (a CBOR map)
+  # after the prefix and sets the flags' attested-credential-data bit all
+  # the same (#41), so neither the length nor the flags say what follows:
+  # `parse_prefix/1` reads only the prefix and ignores the rest, which the
+  # Assertion's signature still covers.
   #
   # Apple's App Attest attested credential data also carries the device's
   # public key, COSE-encoded, after the credential ID. This module does not
@@ -32,6 +36,9 @@ defmodule AppAttest.AuthenticatorData do
   @aaguid_development "appattestdevelop"
   @aaguid_production "appattest" <> <<0, 0, 0, 0, 0, 0, 0>>
 
+  # The App ID hash (32 bytes), the flags byte and the 4-byte Counter.
+  @prefix_size 37
+
   # * `:app_id_hash` - SHA-256 of the app's App ID; called `rpIdHash` in
   #   Apple's own wire format, renamed here to the Spec's own term.
   # * `:flags` - the raw flags byte.
@@ -49,33 +56,44 @@ defmodule AppAttest.AuthenticatorData do
           credential_id: binary() | nil
         }
 
-  # Parses raw authenticator data into its fields. Fails with this module's
-  # own `:truncated`, which its callers translate at their seam, when `data` is shorter than the fixed
-  # 37-byte prefix, or carries a truncated attested credential data (a
-  # credential ID length that its own remaining bytes cannot satisfy).
+  # Parses an Attestation's raw authenticator data into its fields, reading
+  # whatever follows the prefix as attested credential data. Fails with this
+  # module's own `:truncated`, which its callers translate at their seam,
+  # when `data` is shorter than the fixed 37-byte prefix, or carries a
+  # truncated attested credential data (a credential ID length that its own
+  # remaining bytes cannot satisfy).
   @doc false
   @spec parse(binary()) :: {:ok, t()} | {:error, :truncated}
-  def parse(<<app_id_hash::binary-size(32), flags::8, counter::32-big, rest::binary>>) do
-    case parse_attested_credential_data(rest) do
-      {:ok, aaguid, credential_id} ->
-        {:ok,
-         %__MODULE__{
-           app_id_hash: app_id_hash,
-           flags: flags,
-           counter: counter,
-           environment: environment(aaguid),
-           credential_id: credential_id
-         }}
+  def parse(data) do
+    with {:ok, prefix} <- parse_prefix(data) do
+      <<_prefix::binary-size(@prefix_size), rest::binary>> = data
 
-      :none ->
-        {:ok, %__MODULE__{app_id_hash: app_id_hash, flags: flags, counter: counter}}
+      case parse_attested_credential_data(rest) do
+        {:ok, aaguid, credential_id} ->
+          {:ok,
+           %__MODULE__{prefix | environment: environment(aaguid), credential_id: credential_id}}
 
-      :error ->
-        {:error, :truncated}
+        :none ->
+          {:ok, prefix}
+
+        :error ->
+          {:error, :truncated}
+      end
     end
   end
 
-  def parse(_too_short), do: {:error, :truncated}
+  # Parses only the 37-byte prefix of raw authenticator data, ignoring
+  # whatever follows it: what an Assertion's authenticator data is read
+  # with. The attested-credential-data fields always come back `nil`.
+  # Fails with `:truncated`, like `parse/1`, when `data` is shorter than the
+  # prefix.
+  @doc false
+  @spec parse_prefix(binary()) :: {:ok, t()} | {:error, :truncated}
+  def parse_prefix(<<app_id_hash::binary-size(32), flags::8, counter::32-big, _rest::binary>>) do
+    {:ok, %__MODULE__{app_id_hash: app_id_hash, flags: flags, counter: counter}}
+  end
+
+  def parse_prefix(_too_short), do: {:error, :truncated}
 
   # Checks `authenticator_data`'s App ID hash against `app_id`
   # (`"<Team ID>.<bundle ID>"`), the check both `AppAttest.Attestation` and
