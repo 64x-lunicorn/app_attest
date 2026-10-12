@@ -234,7 +234,14 @@ defmodule AppAttest.Fixtures do
   library's own nonce function, so an accepted Assertion proves the
   library builds it the same way.
 
-  Options make one field of the envelope wrong at a time. Each takes the
+  Two options shape the authenticator data that is signed, passed on to
+  `authenticator_data/2` as is:
+
+  * `:flags` - the flags byte (default 0).
+  * `:extension_data` - bytes after the prefix (default: none), such as
+    a CBOR map of extension data the way a real device appends it.
+
+  The others make one field of the envelope wrong at a time. Each takes the
   CBOR value to put in that field as is (wrap a binary with `cbor_bytes/1`
   for a well-formed byte string), or `:omit` to leave the field out:
 
@@ -250,7 +257,12 @@ defmodule AppAttest.Fixtures do
         ) ::
           binary()
   def assertion(counter, app_id, client_data, private_key, opts \\ []) do
-    auth_data = authenticator_data(app_id, counter: counter)
+    auth_data =
+      authenticator_data(
+        app_id,
+        [counter: counter] ++ Keyword.take(opts, [:flags, :extension_data])
+      )
+
     signature = :public_key.sign(apple_nonce(auth_data, client_data), :sha256, private_key)
 
     %{}
@@ -267,15 +279,16 @@ defmodule AppAttest.Fixtures do
   (SHA-256 of the App ID, one flags byte, a 4-byte big-endian Counter),
   followed by attested credential data (a 16-byte aaguid, a 2-byte
   credentialId length and the credentialId) when `:attested_credential` is
-  given, as an Attestation carries it; a self-generated Assertion carries
-  the prefix only (a real one appends extension data, see
-  `real_assertion/0`).
+  given, as an Attestation carries it, or by `:extension_data` when given,
+  as a real Assertion carries it (see `real_assertion/0`).
 
   Options:
 
   * `:counter` - the Counter (default 0).
   * `:flags` - the flags byte (default 0).
   * `:attested_credential` - `{aaguid, credential_id}` (default: none).
+  * `:extension_data` - raw bytes appended after the prefix (default:
+    none); ignored when `:attested_credential` is given.
   """
   @spec authenticator_data(String.t(), keyword()) :: binary()
   def authenticator_data(app_id, opts \\ []) do
@@ -285,7 +298,7 @@ defmodule AppAttest.Fixtures do
 
     case Keyword.get(opts, :attested_credential) do
       nil ->
-        prefix
+        prefix <> Keyword.get(opts, :extension_data, <<>>)
 
       {aaguid, credential_id} ->
         prefix <> aaguid <> <<byte_size(credential_id)::16>> <> credential_id

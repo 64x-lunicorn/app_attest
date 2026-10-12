@@ -104,7 +104,7 @@ defmodule AppAttest.Assertion do
 
   defp parse_authenticator_data(auth_data) do
     case AuthenticatorData.parse_prefix(auth_data) do
-      {:ok, authenticator_data} -> {:ok, authenticator_data}
+      {:ok, authenticator_data, _extension_data} -> {:ok, authenticator_data}
       {:error, :truncated} -> {:error, :invalid_authenticator_data}
     end
   end
