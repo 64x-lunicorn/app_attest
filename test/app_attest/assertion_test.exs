@@ -202,6 +202,53 @@ defmodule AppAttest.AssertionTest do
              ) == {:error, :invalid_signature}
     end
 
+    test "rejects a Device whose environment is neither development nor production as an invalid Device" do
+      {private_key, public_key} = Fixtures.device_key_pair()
+      assertion = Fixtures.assertion(1, @app_id, Fixtures.client_data(), private_key)
+
+      # Even expected in the same, meaningless environment: no Attestation
+      # ever yields such a Device, so nothing can match it.
+      for environment <- [nil, :staging, "development"] do
+        device = %Device{device(public_key, 0) | environment: environment}
+
+        assert Assertion.validate(assertion, Fixtures.client_data(), @app_id, device, environment) ==
+                 {:error, :invalid_device}
+      end
+    end
+
+    test "rejects an expected environment that is neither development nor production as a mismatch" do
+      {private_key, public_key} = Fixtures.device_key_pair()
+      assertion = Fixtures.assertion(1, @app_id, Fixtures.client_data(), private_key)
+
+      for expected <- [nil, :staging, "development"] do
+        assert Assertion.validate(
+                 assertion,
+                 Fixtures.client_data(),
+                 @app_id,
+                 device(public_key, 0),
+                 expected
+               ) == {:error, :environment_mismatch}
+      end
+    end
+
+    test "rejects a Device whose Counter is not a non-negative integer as an invalid Device" do
+      {private_key, public_key} = Fixtures.device_key_pair()
+      assertion = Fixtures.assertion(1, @app_id, Fixtures.client_data(), private_key)
+
+      for counter <- [nil, -1, 0.5, "0"] do
+        device = %Device{device(public_key, 0) | counter: counter}
+
+        assert Assertion.validate(
+                 assertion,
+                 Fixtures.client_data(),
+                 @app_id,
+                 device,
+                 :development
+               ) ==
+                 {:error, :invalid_device}
+      end
+    end
+
     test "rejects an Assertion expected in a different environment than the Device's" do
       {private_key, public_key} = Fixtures.device_key_pair()
       client_data = Fixtures.client_data()

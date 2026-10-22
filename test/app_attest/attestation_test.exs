@@ -417,6 +417,20 @@ defmodule AppAttest.AttestationTest do
       end)
     end
 
+    test "rejects Apple's real fixture against a root that is not even bytes instead of raising" do
+      for root <- [nil, :apple, 42] do
+        assert Attestation.validate(
+                 Fixtures.attestation(),
+                 Fixtures.key_id(),
+                 Fixtures.challenge(),
+                 Fixtures.app_id(),
+                 %Trust{Trust.apple() | app_attest_root: root},
+                 :development,
+                 at: Fixtures.attestation_time()
+               ) == {:error, :untrusted_root}
+      end
+    end
+
     test "rejects Apple's real fixture against a root that is not a certificate instead of crashing" do
       assert Attestation.validate(
                Fixtures.attestation(),

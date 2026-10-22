@@ -119,6 +119,18 @@ defmodule AppAttest.ReceiptTest do
                Receipt.verify("not a receipt", Fixtures.risk_metric_chain().trust)
     end
 
+    test "rejects a genuine Receipt against a root that is not even bytes as untrusted, never raising" do
+      chain = Fixtures.risk_metric_chain()
+
+      for root <- [nil, :apple, 42] do
+        assert {:error, :untrusted_receipt} =
+                 Receipt.verify(Fixtures.receipt(1, chain), %Trust{
+                   chain.trust
+                   | receipt_root: root
+                 })
+      end
+    end
+
     test "rejects something that is not bytes at all, never raising" do
       assert {:error, :invalid_receipt} =
                Receipt.verify(nil, Fixtures.risk_metric_chain().trust)

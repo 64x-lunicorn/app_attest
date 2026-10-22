@@ -21,8 +21,13 @@ defmodule AppAttest.Assertion do
   rejected with one of these, never by raising: the whole point of
   this library is to distrust its own input.
 
+  * `:invalid_device` - `device` is not one `AppAttest.Attestation.validate/7`
+    returned: its `counter` is not a non-negative integer, or its
+    `environment` is neither `:development` nor `:production`. The
+    caller's stored state is as distrusted as the Assertion itself.
   * `:environment_mismatch` - `expected_environment` does not match the
-    Device's `environment`.
+    Device's `environment`, including an `expected_environment` that is
+    neither `:development` nor `:production`: nothing matches it.
   * `:invalid_assertion` - `assertion_object` is not an assertion object:
     not well-formed CBOR at all, a missing `signature` or
     `authenticatorData`, or one of the two not a CBOR byte string. Which
@@ -39,7 +44,8 @@ defmodule AppAttest.Assertion do
     the Device's `counter`.
   """
   @type rejection ::
-          :environment_mismatch
+          :invalid_device
+          | :environment_mismatch
           | :invalid_assertion
           | :invalid_authenticator_data
           | :invalid_signature
@@ -83,7 +89,8 @@ defmodule AppAttest.Assertion do
         %Device{public_key: public_key, counter: stored_counter} = device,
         expected_environment
       ) do
-    with :ok <- check_environment(device.environment, expected_environment),
+    with :ok <- check_device(device),
+         :ok <- check_environment(device.environment, expected_environment),
          {:ok, %{signature: signature, auth_data: auth_data}} <- decode(assertion_object),
          {:ok, authenticator_data} <- parse_authenticator_data(auth_data),
          :ok <- check_signature(auth_data, client_data, signature, public_key),
@@ -115,6 +122,16 @@ defmodule AppAttest.Assertion do
       {:error, :other_app_id} -> {:error, :app_id_mismatch}
     end
   end
+
+  # A Device with a Counter nothing can be strictly greater than, or an
+  # environment no Attestation yields, is not a Device `AppAttest.Attestation`
+  # returned, whatever the caller stored.
+  defp check_device(%Device{counter: counter, environment: environment})
+       when is_integer(counter) and counter >= 0 and
+              environment in [:development, :production],
+       do: :ok
+
+  defp check_device(%Device{}), do: {:error, :invalid_device}
 
   defp check_environment(stored_environment, expected_environment) do
     if stored_environment == expected_environment do
