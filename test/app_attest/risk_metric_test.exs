@@ -242,6 +242,21 @@ defmodule AppAttest.RiskMetricTest do
     end
   end
 
+  # Answers every request that arrives on `listener` with `response`, until
+  # the test that owns the listener ends and closes it; a connection the
+  # client closes before sending anything is simply the next one's turn.
+  defp redirect_every_request(listener, response) do
+    with {:ok, socket} <- :gen_tcp.accept(listener) do
+      case :gen_tcp.recv(socket, 0, 2000) do
+        {:ok, _request} -> :gen_tcp.send(socket, response)
+        {:error, _closed_or_timeout} -> :ok
+      end
+
+      :gen_tcp.close(socket)
+      redirect_every_request(listener, response)
+    end
+  end
+
   # The real transport, `:httpc` against a local socket standing in for
   # Apple's host: the one part of `fetch/4` its `opts[:transport]` seam
   # cannot prove.
@@ -263,9 +278,12 @@ defmodule AppAttest.RiskMetricTest do
     test "gives up on a server that accepts the connection and never answers" do
       {listener, port} = listen()
 
+      # Reads the request and then holds the connection open, answering
+      # nothing, until the client gives up and closes it.
       Task.start(fn ->
-        {:ok, _socket} = :gen_tcp.accept(listener)
-        Process.sleep(:infinity)
+        with {:ok, socket} <- :gen_tcp.accept(listener),
+             {:ok, _request} <- :gen_tcp.recv(socket, 0, :infinity),
+             do: :gen_tcp.recv(socket, 0, :infinity)
       end)
 
       {microseconds, result} =
@@ -281,22 +299,16 @@ defmodule AppAttest.RiskMetricTest do
       test_pid = self()
 
       Task.start(fn ->
-        {:ok, _socket} = :gen_tcp.accept(elsewhere)
-        send(test_pid, :reached_elsewhere)
+        with {:ok, _socket} <- :gen_tcp.accept(elsewhere), do: send(test_pid, :reached_elsewhere)
       end)
 
       Task.start(fn ->
-        {:ok, socket} = :gen_tcp.accept(redirecting)
-        {:ok, _request} = :gen_tcp.recv(socket, 0, 2000)
-
-        :gen_tcp.send(
-          socket,
+        redirect_every_request(
+          redirecting,
           "HTTP/1.1 307 Temporary Redirect\r\n" <>
             "Location: http://127.0.0.1:#{elsewhere_port}/v1/attestationData\r\n" <>
             "Content-Length: 0\r\nConnection: close\r\n\r\n"
         )
-
-        :gen_tcp.close(socket)
       end)
 
       assert RiskMetric.http_request(request(redirecting_port), timeout: 2000) ==

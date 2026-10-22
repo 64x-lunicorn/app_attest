@@ -172,21 +172,23 @@ defmodule AppAttest.RiskMetric do
         body: Base.encode64(receipt)
       }
 
-      case transport.(request) do
-        {:ok, 200, body} ->
-          with {:ok, new_receipt} <- decode_base64(body),
-               {:ok, verified} <- verify_receipt(new_receipt, trust, at) do
-            risk_metric_fields(verified, %Device{device | receipt: new_receipt})
-          end
-
-        {:ok, status, body} ->
-          {:error, {:apple_error, status, body}}
-
-        {:error, reason} ->
-          {:error, {:transport_error, reason}}
-      end
+      request |> transport.() |> exchange(device, trust, at)
     end
   end
+
+  # Apple's answer to the exchange: the new receipt on 200, else one of its
+  # own documented statuses, or no answer at all.
+  defp exchange({:ok, 200, body}, %Device{} = device, trust, at) do
+    with {:ok, new_receipt} <- decode_base64(body),
+         {:ok, verified} <- verify_receipt(new_receipt, trust, at) do
+      risk_metric_fields(verified, %Device{device | receipt: new_receipt})
+    end
+  end
+
+  defp exchange({:ok, status, body}, _device, _trust, _at),
+    do: {:error, {:apple_error, status, body}}
+
+  defp exchange({:error, reason}, _device, _trust, _at), do: {:error, {:transport_error, reason}}
 
   defp build_token(device_check_key, at) do
     case DeviceCheckToken.build(device_check_key, DateTime.to_unix(at)) do

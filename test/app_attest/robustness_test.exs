@@ -109,7 +109,7 @@ defmodule AppAttest.RobustnessTest do
     {length, state} = :rand.uniform_s(16, state)
     length = min(length, byte_size(bin) - position)
     {junk, state} = random_bytes(length, state)
-    <<before::binary-size(position), slice::binary-size(length), rest::binary>> = bin
+    <<before::binary-size(^position), slice::binary-size(^length), rest::binary>> = bin
 
     case kind do
       1 -> {before <> flip(slice, junk) <> rest, state}
