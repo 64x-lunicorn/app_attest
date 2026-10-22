@@ -89,6 +89,17 @@ defmodule AppAttest.Fixtures do
   @spec attestation() :: binary()
   def attestation, do: Base.decode64!(@fixture["attestation"])
 
+  @doc """
+  A time at which every certificate of the real fixture Attestation's
+  chain, and of the Receipt it carries, was valid: 2024-02-04, the day
+  after its credential certificate was issued (its validity runs from
+  2024-02-03 to 2025-01-08; the Receipt's signing certificate's from
+  2023-03-08 to 2024-04-06). The time to validate the fixture at, since by
+  now both have expired.
+  """
+  @spec attestation_time() :: DateTime.t()
+  def attestation_time, do: ~U[2024-02-04 00:00:00Z]
+
   @doc "The one-time server challenge this Attestation was created for."
   @spec challenge() :: binary()
   def challenge, do: Base.decode64!(@fixture["challenge"])

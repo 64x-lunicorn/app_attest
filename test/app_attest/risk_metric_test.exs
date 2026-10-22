@@ -18,7 +18,8 @@ defmodule AppAttest.RiskMetricTest do
         Fixtures.challenge(),
         Fixtures.app_id(),
         Trust.apple(),
-        :development
+        :development,
+        at: Fixtures.attestation_time()
       )
 
     device
@@ -155,6 +156,40 @@ defmodule AppAttest.RiskMetricTest do
                    transport: transport
                  )
       end
+    end
+
+    test "rejects a new receipt whose chain is not valid at the given time" do
+      chain = Fixtures.risk_metric_chain()
+      transport = respond(200, Base.encode64(Fixtures.receipt(1, chain)))
+
+      assert {:error, :certificate_expired} =
+               RiskMetric.fetch(stored_device(), Fixtures.device_check_key(), chain.trust,
+                 transport: transport,
+                 at: ~U[2100-01-01 00:00:00Z]
+               )
+    end
+
+    test "stamps the JWT's iat with the given time, so the request and the receipt share one clock" do
+      chain = Fixtures.risk_metric_chain()
+      test_pid = self()
+      # An hour from now: within the fresh chain's validity, and not now.
+      at = DateTime.utc_now() |> DateTime.add(3600, :second) |> DateTime.truncate(:second)
+
+      transport = fn request ->
+        send(test_pid, {:request, request})
+        {:ok, 200, Base.encode64(Fixtures.receipt(1, chain))}
+      end
+
+      assert {:ok, _result} =
+               RiskMetric.fetch(stored_device(), Fixtures.device_check_key(), chain.trust,
+                 transport: transport,
+                 at: at
+               )
+
+      assert_received {:request, %{authorization: jwt}}
+      [_header, claims_b64, _signature] = String.split(jwt, ".")
+      claims = claims_b64 |> Base.url_decode64!(padding: false) |> :json.decode()
+      assert claims["iat"] == DateTime.to_unix(at)
     end
 
     test "rejects a response that is not base64 at all" do

@@ -33,7 +33,8 @@ defmodule AppAttest.TrustTest do
                  Fixtures.challenge(),
                  Fixtures.app_id(),
                  trust,
-                 :development
+                 :development,
+                 at: Fixtures.attestation_time()
                )
     end
 
@@ -41,7 +42,9 @@ defmodule AppAttest.TrustTest do
       trust = %Trust{Trust.apple() | app_attest_root: Fixtures.untrusted_root()}
 
       assert {:ok, %Receipt{type: :attest}} =
-               Receipt.verify(Fixtures.attestation_receipt(), trust)
+               Receipt.verify(Fixtures.attestation_receipt(), trust,
+                 at: Fixtures.attestation_time()
+               )
     end
 
     test "Apple's two roots swapped reject a genuine Attestation and a genuine Receipt" do
@@ -54,10 +57,13 @@ defmodule AppAttest.TrustTest do
                Fixtures.challenge(),
                Fixtures.app_id(),
                swapped,
-               :development
+               :development,
+               at: Fixtures.attestation_time()
              ) == {:error, :untrusted_root}
 
-      assert Receipt.verify(Fixtures.attestation_receipt(), swapped) ==
+      assert Receipt.verify(Fixtures.attestation_receipt(), swapped,
+               at: Fixtures.attestation_time()
+             ) ==
                {:error, :untrusted_receipt}
     end
   end

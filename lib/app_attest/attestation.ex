@@ -1,7 +1,8 @@
 defmodule AppAttest.Attestation do
   @moduledoc """
   Validates a device's App Attest Attestation: its certificate chain
-  against the App Attest root of the caller's `AppAttest.Trust`, its nonce
+  against the App Attest root of the caller's `AppAttest.Trust`, every
+  certificate of it valid at the time of validation, its nonce
   against the expected challenge, its public key and credential ID against
   the app-supplied Key ID, its App ID hash against the expected app, its
   start Counter of 0, and its environment against the one the caller
@@ -31,6 +32,8 @@ defmodule AppAttest.Attestation do
   * `:untrusted_root` - the certificate chain does not lead to the App
     Attest root of `trust`, including one that is not a DER certificate at
     all: no chain leads to it.
+  * `:certificate_expired` - the chain leads to the root, but a certificate
+    of it was not valid at `opts[:at]`: already expired, or not yet valid.
   * `:nonce_mismatch` - the nonce does not match `challenge`.
   * `:key_id_mismatch` - `key_id` does not identify this Attestation's key:
     the SHA-256 of the credential certificate's public key, or the
@@ -50,6 +53,7 @@ defmodule AppAttest.Attestation do
   @type rejection ::
           :invalid_attestation
           | :untrusted_root
+          | :certificate_expired
           | :nonce_mismatch
           | :key_id_mismatch
           | :invalid_authenticator_data
@@ -76,8 +80,15 @@ defmodule AppAttest.Attestation do
   returns it, and to `expected_environment`, the App Attest environment
   the caller expects for this request.
 
+  ## Options
+
+  * `:at` - the time to validate at, a `DateTime`; defaults to now. Every
+    certificate of the chain must be valid at it, so a test validates a
+    real, long expired Apple Attestation at the time it was issued, while a
+    server validating a fresh one leaves it out.
+
   The checks run in the order Apple's "Validating apps that connect to your
-  server" lists them: the certificate chain (step 1), the nonce (2-4), the
+  server" lists them: the certificate chain and its validity (step 1), the nonce (2-4), the
   SHA-256 of the credential certificate's public key in X9.62 uncompressed
   point format against `key_id` (5), the App ID hash (6), a Counter of 0
   (7), the aaguid's environment against `expected_environment` (8) and the
@@ -99,7 +110,8 @@ defmodule AppAttest.Attestation do
           binary(),
           String.t(),
           Trust.t(),
-          Device.environment()
+          Device.environment(),
+          at: DateTime.t()
         ) :: {:ok, Device.t()} | {:error, rejection()}
   def validate(
         attestation_object,
@@ -107,11 +119,14 @@ defmodule AppAttest.Attestation do
         challenge,
         app_id,
         %Trust{app_attest_root: root},
-        expected_environment
+        expected_environment,
+        opts \\ []
       ) do
+    at = Keyword.get_lazy(opts, :at, &DateTime.utc_now/0)
+
     with {:ok, %{auth_data: auth_data, chain: chain, receipt: receipt}} <-
            decode(attestation_object),
-         {:ok, leaf} <- check_trusted_chain(root, chain),
+         {:ok, leaf} <- check_trusted_chain(root, chain, at),
          :ok <- check_nonce(leaf, auth_data, challenge),
          {:ok, key_id_bytes} <- check_public_key_hash(leaf, key_id),
          {:ok, authenticator_data} <- parse_authenticator_data(auth_data),
@@ -154,12 +169,14 @@ defmodule AppAttest.Attestation do
 
   # Junk in place of any certificate of the chain, not only the leaf, is a
   # malformed Attestation; a well-formed chain that does not lead to `root`
-  # is an untrusted one. Returns the trusted, decoded leaf.
-  defp check_trusted_chain(root, chain) do
-    case RootCertificate.trusted_leaf(root, chain) do
+  # is an untrusted one; one that does, but was not valid at `at`, an
+  # expired one. Returns the trusted, decoded leaf.
+  defp check_trusted_chain(root, chain, at) do
+    case RootCertificate.trusted_leaf(root, chain, at) do
       {:ok, leaf} -> {:ok, leaf}
       {:error, :malformed_chain} -> {:error, :invalid_attestation}
       {:error, :untrusted_chain} -> {:error, :untrusted_root}
+      {:error, :expired_chain} -> {:error, :certificate_expired}
     end
   end
 

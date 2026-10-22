@@ -13,6 +13,16 @@ defmodule AppAttest.ReceiptTest do
                 not_before: nil,
                 expiration_time: ~U[2024-05-04 20:27:06.193Z]
               }} =
+               Receipt.verify(Fixtures.attestation_receipt(), Trust.apple(),
+                 at: Fixtures.attestation_time()
+               )
+    end
+
+    test "rejects it as expired when verified now, its signing certificate having expired" do
+      # The Receipt's signing certificate was valid from 2023-03-08 to
+      # 2024-04-06 (read once off its bytes), so verified at the default
+      # time, now, its chain is no longer valid.
+      assert {:error, :certificate_expired} =
                Receipt.verify(Fixtures.attestation_receipt(), Trust.apple())
     end
 
@@ -20,7 +30,8 @@ defmodule AppAttest.ReceiptTest do
       assert {:error, :untrusted_receipt} =
                Receipt.verify(
                  Fixtures.attestation_receipt(),
-                 %Trust{Trust.apple() | receipt_root: Trust.apple().app_attest_root}
+                 %Trust{Trust.apple() | receipt_root: Trust.apple().app_attest_root},
+                 at: Fixtures.attestation_time()
                )
     end
 
@@ -32,7 +43,8 @@ defmodule AppAttest.ReceiptTest do
         assert {:error, :invalid_receipt} =
                  Receipt.verify(
                    binary_part(receipt, 0, length),
-                   Trust.apple()
+                   Trust.apple(),
+                   at: Fixtures.attestation_time()
                  )
       end
     end
@@ -45,10 +57,11 @@ defmodule AppAttest.ReceiptTest do
     test "answers it with any single byte flipped, never raising" do
       receipt = Fixtures.attestation_receipt()
       trust = Trust.apple()
-      genuine = Receipt.verify(receipt, trust)
+      at = Fixtures.attestation_time()
+      genuine = Receipt.verify(receipt, trust, at: at)
 
       for position <- 0..(byte_size(receipt) - 1) do
-        assert Receipt.verify(Fixtures.flip_byte(receipt, position), trust) in [
+        assert Receipt.verify(Fixtures.flip_byte(receipt, position), trust, at: at) in [
                  {:error, :untrusted_receipt},
                  {:error, :invalid_receipt},
                  genuine
@@ -68,6 +81,15 @@ defmodule AppAttest.ReceiptTest do
                 not_before: ~U[2026-01-01 00:00:00Z],
                 expiration_time: ~U[2026-01-08 00:00:00Z]
               }} = Receipt.verify(Fixtures.receipt(42, chain), chain.trust)
+    end
+
+    test "rejects a Receipt whose signing certificate is not valid at the verification time" do
+      chain = Fixtures.risk_metric_chain()
+
+      assert {:error, :certificate_expired} =
+               Receipt.verify(Fixtures.receipt(1, chain), chain.trust,
+                 at: ~U[2100-01-01 00:00:00Z]
+               )
     end
 
     test "rejects a Receipt whose chain does not lead to the given root" do

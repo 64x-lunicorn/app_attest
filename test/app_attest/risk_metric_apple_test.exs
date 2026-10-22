@@ -87,7 +87,8 @@ defmodule AppAttest.RiskMetricAppleTest do
         Fixtures.challenge(),
         Fixtures.app_id(),
         Trust.apple(),
-        :development
+        :development,
+        at: Fixtures.attestation_time()
       )
 
     RiskMetric.fetch(device, device_check_key, Trust.apple())

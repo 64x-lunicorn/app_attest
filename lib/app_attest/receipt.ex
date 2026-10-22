@@ -15,7 +15,7 @@ defmodule AppAttest.Receipt do
       the risk metric and a Not Before date.
 
   `AppAttest.Attestation.validate/6` hands its Receipt through unverified; a
-  caller that wants that Receipt's Expiration Time calls `verify/2` on it
+  caller that wants that Receipt's Expiration Time calls `verify/3` on it
   with `AppAttest.Trust.apple/0` itself.
 
   ## The trusted root
@@ -27,7 +27,7 @@ defmodule AppAttest.Receipt do
   Receipt Signing -> Apple Application Integration CA 5 - G1 -> Apple Root
   CA - G3, verifies against that root and does not verify against the App
   Attest root (`AppAttest.ReceiptTest`, 64x-lunicorn/app_attest#23).
-  `verify/2` takes the whole `AppAttest.Trust` and picks its Receipt root
+  `verify/3` takes the whole `AppAttest.Trust` and picks its Receipt root
   itself; the Trust stays an explicit parameter, so a test can substitute
   its own root.
 
@@ -72,10 +72,12 @@ defmodule AppAttest.Receipt do
   @typedoc """
   * `:untrusted_receipt` - the Receipt's signature, or its certificate
     chain against the Receipt root of the trust, does not verify.
+  * `:certificate_expired` - the chain leads to the root, but a certificate
+    of it was not valid at `opts[:at]`: already expired, or not yet valid.
   * `:invalid_receipt` - the bytes are not a well-formed CMS-signed Receipt,
     or a field it must carry is missing or unreadable.
   """
-  @type rejection :: :untrusted_receipt | :invalid_receipt
+  @type rejection :: :untrusted_receipt | :certificate_expired | :invalid_receipt
 
   # RFC 5652 pkcs7-signedData, and the one digest algorithm Apple's Receipts
   # use (the real Apple Receipt inside the fixture Attestation, and
@@ -96,22 +98,33 @@ defmodule AppAttest.Receipt do
   nothing has verified is not trustworthy enough to read at all, only then
   Apple's attribute list.
 
+  ## Options
+
+  * `:at` - the time to verify at, a `DateTime`; defaults to now. Every
+    certificate of the Receipt's chain must be valid at it. Apple signs
+    Receipts with short-lived certificates, so a Receipt kept for long is
+    verified at the time it was issued, and a fresh one at now.
+
   Returns `{:ok, receipt}` or `{:error, rejection}`; never raises, whatever
   the bytes.
   """
-  @spec verify(binary(), Trust.t()) :: {:ok, t()} | {:error, rejection()}
-  def verify(receipt, %Trust{receipt_root: root}) when is_binary(receipt) and is_binary(root) do
+  @spec verify(binary(), Trust.t(), at: DateTime.t()) :: {:ok, t()} | {:error, rejection()}
+  def verify(receipt, trust, opts \\ [])
+
+  def verify(receipt, %Trust{receipt_root: root}, opts) when is_binary(receipt) do
+    at = Keyword.get_lazy(opts, :at, &DateTime.utc_now/0)
+
     with {:ok, signed_data} <- decode_signed_data(receipt),
          {:ok, content, signature, signer_id, certificates} <- signed_content(signed_data),
          {:ok, chain} <- signer_chain(signer_id, certificates),
-         {:ok, leaf} <- verify_chain(root, chain),
+         {:ok, leaf} <- verify_chain(root, chain, at),
          :ok <- verify_signature(content, signature, leaf),
          {:ok, attributes} <- parse_attributes(content) do
       extract_fields(attributes)
     end
   end
 
-  def verify(_receipt, %Trust{}), do: {:error, :invalid_receipt}
+  def verify(_receipt, %Trust{}, _opts), do: {:error, :invalid_receipt}
 
   # OTP's ASN.1 decoder reports undecodable input by failing its own
   # `{:ok, _} = ...` match, so exactly that failure is caught.
@@ -167,11 +180,12 @@ defmodule AppAttest.Receipt do
 
   defp encode(record), do: :public_key.der_encode(:Certificate, record)
 
-  defp verify_chain(root, chain) do
-    case RootCertificate.trusted_leaf(root, chain) do
+  defp verify_chain(root, chain, at) do
+    case RootCertificate.trusted_leaf(root, chain, at) do
       {:ok, leaf} -> {:ok, leaf}
       {:error, :malformed_chain} -> {:error, :invalid_receipt}
       {:error, :untrusted_chain} -> {:error, :untrusted_receipt}
+      {:error, :expired_chain} -> {:error, :certificate_expired}
     end
   end
 

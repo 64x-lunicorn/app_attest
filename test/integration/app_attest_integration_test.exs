@@ -73,7 +73,8 @@ defmodule AppAttest.IntegrationTest do
                  AppAttest.Fixtures.challenge(),
                  AppAttest.Fixtures.app_id(),
                  AppAttest.Trust.apple(),
-                 :development
+                 :development,
+                 at: AppAttest.Fixtures.attestation_time()
                )
 
       assert is_binary(receipt) and byte_size(receipt) > 0
@@ -90,7 +91,8 @@ defmodule AppAttest.IntegrationTest do
                    AppAttest.Trust.apple()
                    | app_attest_root: AppAttest.Fixtures.untrusted_root()
                  },
-                 :development
+                 :development,
+                 at: AppAttest.Fixtures.attestation_time()
                )
     end
 
@@ -102,7 +104,8 @@ defmodule AppAttest.IntegrationTest do
                  "a-different-challenge",
                  AppAttest.Fixtures.app_id(),
                  AppAttest.Trust.apple(),
-                 :development
+                 :development,
+                 at: AppAttest.Fixtures.attestation_time()
                )
     end
 
@@ -114,7 +117,8 @@ defmodule AppAttest.IntegrationTest do
                  AppAttest.Fixtures.challenge(),
                  "a-different-app-id-hash",
                  AppAttest.Trust.apple(),
-                 :development
+                 :development,
+                 at: AppAttest.Fixtures.attestation_time()
                )
     end
 
@@ -126,7 +130,8 @@ defmodule AppAttest.IntegrationTest do
                  AppAttest.Fixtures.challenge(),
                  AppAttest.Fixtures.app_id(),
                  AppAttest.Trust.apple(),
-                 :development
+                 :development,
+                 at: AppAttest.Fixtures.attestation_time()
                )
     end
   end
@@ -218,7 +223,8 @@ defmodule AppAttest.IntegrationTest do
                  AppAttest.Fixtures.challenge(),
                  AppAttest.Fixtures.app_id(),
                  AppAttest.Trust.apple(),
-                 _expected_environment = :production
+                 _expected_environment = :production,
+                 at: AppAttest.Fixtures.attestation_time()
                )
     end
 
@@ -326,7 +332,8 @@ defmodule AppAttest.IntegrationTest do
               AppAttest.Trust.apple()
               | app_attest_root: AppAttest.Fixtures.untrusted_root()
             },
-            :development
+            :development,
+            at: AppAttest.Fixtures.attestation_time()
           ),
         nonce_mismatch:
           AppAttest.Attestation.validate(
@@ -335,7 +342,8 @@ defmodule AppAttest.IntegrationTest do
             "a-different-challenge",
             AppAttest.Fixtures.app_id(),
             AppAttest.Trust.apple(),
-            :development
+            :development,
+            at: AppAttest.Fixtures.attestation_time()
           ),
         key_id_mismatch:
           AppAttest.Attestation.validate(
@@ -344,7 +352,8 @@ defmodule AppAttest.IntegrationTest do
             AppAttest.Fixtures.challenge(),
             AppAttest.Fixtures.app_id(),
             AppAttest.Trust.apple(),
-            :development
+            :development,
+            at: AppAttest.Fixtures.attestation_time()
           ),
         app_id_mismatch:
           AppAttest.Attestation.validate(
@@ -353,7 +362,8 @@ defmodule AppAttest.IntegrationTest do
             AppAttest.Fixtures.challenge(),
             "a-different-app-id-hash",
             AppAttest.Trust.apple(),
-            :development
+            :development,
+            at: AppAttest.Fixtures.attestation_time()
           ),
         counter_not_increasing:
           AppAttest.Assertion.validate(
