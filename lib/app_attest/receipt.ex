@@ -35,7 +35,10 @@ defmodule AppAttest.Receipt do
 
   The Receipt is a PKCS#7/CMS SignedData structure (RFC 5652) with one
   SignerInfo, identified by issuer and serial number, SHA-256 and no signed
-  attributes, the shape of the real Apple Receipt. No Hex package parses
+  attributes, signed with ecdsa-with-SHA256 over content of type id-data,
+  the shape of the real Apple Receipt; anything else is not a Receipt. The
+  signer's chain is linked up by issuer from the certificates the envelope
+  carries, in whatever order it lists them. No Hex package parses
   one, but `:public_key`'s `der_decode/2` already dispatches
   `'ContentInfo'`, `'SignedData'`, `'SignerInfo'` and
   `'IssuerAndSerialNumber'` to a compiled-in RFC 5652 ASN.1 module, so only
@@ -79,11 +82,13 @@ defmodule AppAttest.Receipt do
   """
   @type rejection :: :untrusted_receipt | :certificate_expired | :invalid_receipt
 
-  # RFC 5652 pkcs7-signedData, and the one digest algorithm Apple's Receipts
-  # use (the real Apple Receipt inside the fixture Attestation, and
-  # takimoto3/app-attest's receipt fixtures).
+  # RFC 5652 pkcs7-signedData and id-data, and the one digest and
+  # signature algorithm Apple's Receipts use (the real Apple Receipt inside
+  # the fixture Attestation, and takimoto3/app-attest's receipt fixtures).
   @signed_data_oid {1, 2, 840, 113_549, 1, 7, 2}
+  @data_oid {1, 2, 840, 113_549, 1, 7, 1}
   @sha256_oid {2, 16, 840, 1, 101, 3, 4, 2, 1}
+  @ecdsa_with_sha256_oid {1, 2, 840, 10_045, 4, 3, 2}
 
   # Apple's own Receipt attribute numbers ("Assessing fraud risk").
   @type_field 6
@@ -137,17 +142,23 @@ defmodule AppAttest.Receipt do
     :error, {:badmatch, {:error, _reason}} -> {:error, :invalid_receipt}
   end
 
+  # Every field of the envelope that says what was signed and how is held
+  # to the one shape a Receipt has, the signer's version included (RFC
+  # 5652: 1 for a signer identified by issuer and serial number), so no
+  # field outside the signature's cover is left to mean anything.
   defp signed_content(
-         {:SignedData, _version, _digest_algorithms, {:EncapsulatedContentInfo, _type, content},
-          certificates, _crls,
+         {:SignedData, _version, digest_algorithms,
+          {:EncapsulatedContentInfo, @data_oid, content}, certificates, _crls,
           [
-            {:SignerInfo, _signer_version, signer_id,
-             {:DigestAlgorithmIdentifier, @sha256_oid, _params}, :asn1_NOVALUE,
-             _signature_algorithm, signature, _unsigned_attrs}
+            {:SignerInfo, :v1, signer_id, {:DigestAlgorithmIdentifier, @sha256_oid, _params},
+             :asn1_NOVALUE, {:SignatureAlgorithmIdentifier, @ecdsa_with_sha256_oid, _sig_params},
+             signature, _unsigned_attrs}
           ]}
        )
-       when is_binary(content) and is_binary(signature) do
-    {:ok, content, signature, signer_id, certificates}
+       when is_binary(content) and is_binary(signature) and is_list(digest_algorithms) do
+    if Enum.any?(digest_algorithms, &match?({:DigestAlgorithmIdentifier, @sha256_oid, _}, &1)),
+      do: {:ok, content, signature, signer_id, certificates},
+      else: {:error, :invalid_receipt}
   end
 
   defp signed_content(_malformed), do: {:error, :invalid_receipt}
@@ -155,19 +166,34 @@ defmodule AppAttest.Receipt do
   # `certificates` (RFC 5652's `CertificateSet`) comes back decoded, as
   # `{:certificate, cert_record}` per entry; matching the SignerInfo's own
   # issuer and serial number against each record's finds the signer
-  # regardless of how Apple orders the set. Returns the set's DER, signer
-  # first, for `RootCertificate.trusted_leaf/2`, which decodes
-  # each certificate once.
+  # regardless of how Apple orders the set, and each certificate's issuer
+  # against the others' subjects links up its chain from there, whatever
+  # order the set lists them in and whatever else it carries. Returns the
+  # chain's DER, signer first, for `RootCertificate.trusted_leaf/3`, which
+  # decodes each certificate once.
   defp signer_chain({:issuerAndSerialNumber, {:IssuerAndSerialNumber, issuer, serial}}, certs) do
-    records = for {:certificate, record} <- List.wrap(certs), do: record
+    records = for {:certificate, {:Certificate, _, _, _} = record} <- List.wrap(certs), do: record
 
     case Enum.find(records, &signed_by?(&1, issuer, serial)) do
       nil -> {:error, :untrusted_receipt}
-      signer -> {:ok, Enum.map([signer | List.delete(records, signer)], &encode/1)}
+      signer -> {:ok, Enum.map(link(signer, List.delete(records, signer)), &encode/1)}
     end
   end
 
   defp signer_chain(_other_signer_id, _certs), do: {:error, :invalid_receipt}
+
+  # The chain from `certificate` up, each next one the first of `others`
+  # whose subject is the current issuer, until none is (the root, which
+  # the caller's Trust supplies, or a gap path validation then finds) or
+  # the current one is self-signed.
+  defp link(certificate, others) do
+    issuer = tbs_field(certificate, :issuer)
+
+    case Enum.find(others, &(tbs_field(&1, :subject) == issuer)) do
+      nil -> [certificate]
+      next -> [certificate | link(next, List.delete(others, next))]
+    end
+  end
 
   defp signed_by?({:Certificate, tbs_certificate, _algorithm, _signature}, issuer, serial) do
     match?(
@@ -176,7 +202,13 @@ defmodule AppAttest.Receipt do
     )
   end
 
-  defp signed_by?(_not_a_certificate, _issuer, _serial), do: false
+  # RFC 5280's TBSCertificate, as OTP's own `Certificate` record lays it
+  # out: version, serial, signature, issuer, validity, subject, ...
+  defp tbs_field({:Certificate, tbs_certificate, _algorithm, _signature}, :issuer),
+    do: elem(tbs_certificate, 4)
+
+  defp tbs_field({:Certificate, tbs_certificate, _algorithm, _signature}, :subject),
+    do: elem(tbs_certificate, 6)
 
   defp encode(record), do: :public_key.der_encode(:Certificate, record)
 
