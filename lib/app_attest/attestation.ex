@@ -80,6 +80,16 @@ defmodule AppAttest.Attestation do
   returns it, and to `expected_environment`, the App Attest environment
   the caller expects for this request.
 
+  `challenge` must be one the server issued for this attestation alone,
+  consumed on first use: the nonce proves the device attested this
+  challenge, and only the server can see that it was issued once. The
+  receipt in the returned Device is handed through unverified, as Apple's
+  guide reads it only when exchanged: nothing is proven about it until
+  `AppAttest.RiskMetric.fetch/4` sends it to Apple, or
+  `AppAttest.Receipt.verify/3` reads it. And since every byte of
+  `attestation_object` is decoded before anything is rejected, bound what
+  an endpoint accepts before calling this: Apple's SDK produces about 5 KB.
+
   ## Options
 
   * `:at` - the time to validate at, a `DateTime`; defaults to now. Every

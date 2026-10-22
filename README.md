@@ -34,7 +34,7 @@ app_attest checks that the requests reaching your server come from a genuine, un
 
 | | What you get |
 | :--- | :--- |
-| **Attestation validation** | Checks the certificate chain against Apple's App Attest root, the nonce, the App ID hash and the Key ID, and returns the Device to store: public key, start Counter, environment and Receipt. |
+| **Attestation validation** | Checks the certificate chain against Apple's App Attest root, every certificate valid at the time of validation, the nonce, the App ID hash and the Key ID, and returns the Device to store: public key, start Counter, environment and Receipt. |
 | **Assertion validation** | Checks the signature against the public key stored in the Device, the App ID hash and a Counter strictly greater than the stored one, so a captured Assertion cannot be replayed. |
 | **Development and production kept apart** | Records the environment a device attested in and rejects Attestations and Assertions from the other one. |
 | **Risk metric** | Fetches Apple's per-device Risk metric and verifies its Receipt; informational only, never a reason to accept or reject. |
@@ -52,7 +52,7 @@ iOS app --assertion----> your server --> AppAttest.Assertion.validate   --> Devi
                          your server --> AppAttest.RiskMetric.fetch     --> Device with the new Receipt, and the Risk metric (you store and record them)
 ```
 
-Every function takes the state your server stored earlier as input and returns what changed, so storage, timing and refresh stay with the caller.
+Every function takes the state your server stored earlier as input and returns what changed, so storage, timing and refresh stay with the caller. Every certificate chain is checked at the time of validation (`at:` to validate at another), and Apple's two roots are explicit parameters, never application config.
 
 ```elixir
 # Apple's two roots, for every operation that checks a signature chain.
@@ -70,6 +70,16 @@ trust = AppAttest.Trust.apple()
 {:ok, %{device: device, risk_metric: risk_metric}} =
   AppAttest.RiskMetric.fetch(device, device_check_key, trust)
 ```
+
+### What stays with your server
+
+The library checks every byte it is handed. What it cannot see, your server must do:
+
+- **Issue each challenge once.** An Attestation's challenge, and the one inside an Assertion's `client_data`, must be server-generated, single-use and consumed on first use.
+- **Bind `client_data` to the request.** Put the challenge and the request itself (its body, say) in what the device signs: the Counter only rejects an Assertion seen before.
+- **Persist the Counter with a compare-and-set.** Two Assertions validated at once against the same stored Device both pass; only the first persisted may win.
+- **Bound the input.** Apple's SDK produces Attestations of about 5 KB and Assertions of a few hundred bytes; cap what the endpoint accepts before validating.
+- **Treat the Attestation's receipt as unverified** until `AppAttest.RiskMetric.fetch/4` exchanges it with Apple.
 
 ## Quickstart
 

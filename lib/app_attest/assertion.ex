@@ -55,16 +55,26 @@ defmodule AppAttest.Assertion do
   @doc """
   Validates `assertion_object` — the raw, CBOR-encoded assertion Apple's SDK
   produces — against `client_data` (the request-specific data the caller
-  asked the device to sign, typically embedding a fresh server challenge),
-  `app_id` (`"<Team ID>.<bundle ID>"`) and `device`, the caller's stored
-  `AppAttest.Device` (what `AppAttest.Attestation.validate/6` returned, or
-  the previous Assertion moved on): its `public_key`, `counter` and
-  `environment`.
+  asked the device to sign), `app_id` (`"<Team ID>.<bundle ID>"`) and
+  `device`, the caller's stored `AppAttest.Device` (what
+  `AppAttest.Attestation.validate/7` returned, or the previous Assertion
+  moved on): its `public_key`, `counter` and `environment`.
 
   Apple's own on-device API signs every Assertion over `authenticatorData`
   concatenated with the SHA-256 hash of `client_data`, never
   `authenticatorData` alone, so a genuine Assertion only verifies against
   the same `client_data` the device was asked to sign for that request.
+  That is why `client_data` must hold a fresh, single-use server challenge
+  and the request itself (its body, say): the Counter only rejects an
+  Assertion seen before, and only the signature over `client_data` binds
+  an Assertion to this one request rather than to any request a device
+  signed in advance. Apple's own guide checks that embedded challenge
+  against the one the server issued; this library cannot, since it never
+  sees how the caller builds `client_data`.
+
+  Persist the returned Device with a compare-and-set on the stored
+  Counter: two Assertions validated at the same time against the same
+  stored Device both pass, and only the first persisted may win.
 
   An Assertion carries no environment bytes of its own, so `expected_environment`
   is the environment the caller expects for this request; it is
