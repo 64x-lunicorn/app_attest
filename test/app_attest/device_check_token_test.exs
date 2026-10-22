@@ -10,8 +10,8 @@ defmodule AppAttest.DeviceCheckTokenTest do
     test "carries exactly the ES256 header and the claims for its issue time" do
       device_check_key = Fixtures.device_check_key()
 
-      [header_b64, claims_b64, _signature_b64] =
-        device_check_key |> DeviceCheckToken.build(@issued_at) |> String.split(".")
+      {:ok, token} = DeviceCheckToken.build(device_check_key, @issued_at)
+      [header_b64, claims_b64, _signature_b64] = String.split(token, ".")
 
       assert decode_segment(header_b64) == %{"alg" => "ES256", "kid" => "DEVCHECK01"}
       assert decode_segment(claims_b64) == %{"iss" => "TEAMID1234", "iat" => 1_767_225_600}
@@ -20,8 +20,8 @@ defmodule AppAttest.DeviceCheckTokenTest do
     test "is signed by the DeviceCheck key, verifiable with its public key alone" do
       device_check_key = Fixtures.device_check_key()
 
-      [header_b64, claims_b64, signature_b64] =
-        device_check_key |> DeviceCheckToken.build(@issued_at) |> String.split(".")
+      {:ok, token} = DeviceCheckToken.build(device_check_key, @issued_at)
+      [header_b64, claims_b64, signature_b64] = String.split(token, ".")
 
       <<r::big-unsigned-integer-size(32)-unit(8), s::big-unsigned-integer-size(32)-unit(8)>> =
         Base.url_decode64!(signature_b64, padding: false)
@@ -35,6 +35,19 @@ defmodule AppAttest.DeviceCheckTokenTest do
                der_signature,
                public_key
              )
+    end
+  end
+
+  describe "build/2 with a key on another curve" do
+    # ES256 is P-256 by definition (RFC 7518), and Apple issues DeviceCheck
+    # keys on no other curve; a key on P-384 or P-521 yields an r||s pair
+    # of the wrong width, never a token.
+    test "refuses it instead of signing with it" do
+      for curve <- [:secp384r1, :secp521r1] do
+        key = %{Fixtures.device_check_key() | private_key: X509.PrivateKey.new_ec(curve)}
+
+        assert DeviceCheckToken.build(key, @issued_at) == {:error, :not_p256_key}
+      end
     end
   end
 

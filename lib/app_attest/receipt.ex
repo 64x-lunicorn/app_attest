@@ -261,10 +261,11 @@ defmodule AppAttest.Receipt do
   defp type_value("RECEIPT"), do: {:ok, :receipt}
   defp type_value(_unknown), do: {:error, :invalid_receipt}
 
+  # Apple's risk metric counts devices, so a negative one is no risk metric.
   defp integer_value(value) do
     case Integer.parse(value) do
-      {integer, ""} -> {:ok, integer}
-      _not_a_number -> {:error, :invalid_receipt}
+      {integer, ""} when integer >= 0 -> {:ok, integer}
+      _not_a_count -> {:error, :invalid_receipt}
     end
   end
 

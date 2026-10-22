@@ -44,6 +44,20 @@ defmodule AppAttest.AttestationTest do
     validate_self_generated(%{attestation | attestation: attestation_object})
   end
 
+  # Validates `attestation_object` as if it were Apple's real fixture
+  # Attestation: its own key_id, challenge, App ID, root and time.
+  defp validate_fixture_bytes(attestation_object) do
+    Attestation.validate(
+      attestation_object,
+      Fixtures.key_id(),
+      Fixtures.challenge(),
+      Fixtures.app_id(),
+      Trust.apple(),
+      :development,
+      at: Fixtures.attestation_time()
+    )
+  end
+
   defp validate_fixture(key_id) do
     Attestation.validate(
       Fixtures.attestation(),
@@ -221,6 +235,21 @@ defmodule AppAttest.AttestationTest do
       # The last one declares a byte string longer than what follows.
       for input <- [<<0xFF>>, <<>>, <<0x5A, 0, 0, 0, 9>>] do
         assert validate_bytes(input) == {:error, :invalid_attestation}
+      end
+    end
+
+    test "rejects an attestation object followed by trailing bytes as invalid" do
+      for trailing <- [<<0>>, "junk", Fixtures.attestation()] do
+        assert validate_fixture_bytes(Fixtures.attestation() <> trailing) ==
+                 {:error, :invalid_attestation}
+      end
+    end
+
+    test "rejects a certificate followed by trailing bytes as invalid, never as trusted" do
+      [leaf_der, intermediate_der] = Fixtures.certificate_chain()
+
+      for chain <- [[leaf_der <> <<0>>, intermediate_der], [leaf_der, intermediate_der <> "junk"]] do
+        assert validate_fixture_chain(chain, Trust.apple()) == {:error, :invalid_attestation}
       end
     end
 

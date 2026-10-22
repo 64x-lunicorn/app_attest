@@ -95,14 +95,35 @@ defmodule AppAttest.RootCertificate do
   # with raises, exits and throws of many kinds (`X509.Certificate.from_der/1`
   # turns only a `MatchError` into an error tuple), so every kind is caught:
   # any failure to decode is a malformed certificate, never a crash.
+  #
+  # OTP's decoder ignores whatever follows the certificate's own DER
+  # SEQUENCE, so a certificate with bytes appended would decode, and verify,
+  # the same as without them; it is rejected here instead, so one
+  # certificate has one encoding.
   defp decode(der) do
-    case X509.Certificate.from_der(der) do
-      {:ok, certificate} -> {:ok, {:cert, der, certificate}}
-      {:error, _reason} -> :error
+    with true <- der_sequence_size(der) == byte_size(der),
+         {:ok, certificate} <- X509.Certificate.from_der(der) do
+      {:ok, {:cert, der, certificate}}
+    else
+      _not_one_certificate -> :error
     end
   catch
     _kind, _reason -> :error
   end
+
+  # The size of the DER SEQUENCE `der` starts with, header included: its
+  # length is one byte below 128, else that many following bytes (the low
+  # seven bits of the first) hold it big-endian. Anything else is not a
+  # DER SEQUENCE at all.
+  defp der_sequence_size(<<0x30, 0::1, length::7, _rest::binary>>), do: 2 + length
+
+  defp der_sequence_size(
+         <<0x30, 1::1, count::7, length::big-unsigned-size(count)-unit(8), _::binary>>
+       )
+       when count > 0,
+       do: 2 + count + length
+
+  defp der_sequence_size(_not_a_der_sequence), do: :not_a_der_sequence
 
   # A certificate that parses can still be damaged where only path
   # validation looks (its validity times, its extensions), and OTP's

@@ -75,6 +75,14 @@ defmodule AppAttest.Trust do
   -----END CERTIFICATE-----
   """
 
+  # Both decoded once, at compile time, rather than on every `apple/0` call.
+  @apple_app_attest_root_der @apple_app_attest_root_ca_pem
+                             |> X509.Certificate.from_pem!()
+                             |> X509.Certificate.to_der()
+  @apple_root_ca_g3_der @apple_root_ca_g3_pem
+                        |> X509.Certificate.from_pem!()
+                        |> X509.Certificate.to_der()
+
   @enforce_keys [:app_attest_root, :receipt_root]
   defstruct [:app_attest_root, :receipt_root]
 
@@ -96,10 +104,8 @@ defmodule AppAttest.Trust do
   @spec apple() :: t()
   def apple do
     %__MODULE__{
-      app_attest_root: to_der(@apple_app_attest_root_ca_pem),
-      receipt_root: to_der(@apple_root_ca_g3_pem)
+      app_attest_root: @apple_app_attest_root_der,
+      receipt_root: @apple_root_ca_g3_der
     }
   end
-
-  defp to_der(pem), do: pem |> X509.Certificate.from_pem!() |> X509.Certificate.to_der()
 end

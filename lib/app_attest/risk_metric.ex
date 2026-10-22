@@ -79,6 +79,9 @@ defmodule AppAttest.RiskMetric do
     chain against the Receipt root of `trust`, does not verify.
   * `:certificate_expired` - the chain leads to the root, but a certificate
     of it was not valid at `opts[:at]`: already expired, or not yet valid.
+  * `:invalid_device_check_key` - `device_check_key`'s private key is not
+    a P-256 key, the only kind Apple issues for DeviceCheck and the only
+    kind ES256 signs with; nothing is sent.
   * `:invalid_receipt` - Apple's response is not base64, or not a
     well-formed CMS-signed receipt of type `RECEIPT` carrying a risk metric
     and both validity dates.
@@ -90,6 +93,7 @@ defmodule AppAttest.RiskMetric do
   @type rejection ::
           :untrusted_receipt
           | :certificate_expired
+          | :invalid_device_check_key
           | :invalid_receipt
           | {:apple_error, non_neg_integer(), binary()}
           | {:transport_error, term()}
@@ -161,24 +165,33 @@ defmodule AppAttest.RiskMetric do
 
     at = Keyword.get_lazy(opts, :at, &DateTime.utc_now/0)
 
-    request = %{
-      url: host(environment) ++ @path,
-      authorization: DeviceCheckToken.build(device_check_key, DateTime.to_unix(at)),
-      body: Base.encode64(receipt)
-    }
+    with {:ok, authorization} <- build_token(device_check_key, at) do
+      request = %{
+        url: host(environment) ++ @path,
+        authorization: authorization,
+        body: Base.encode64(receipt)
+      }
 
-    case transport.(request) do
-      {:ok, 200, body} ->
-        with {:ok, new_receipt} <- decode_base64(body),
-             {:ok, verified} <- verify_receipt(new_receipt, trust, at) do
-          risk_metric_fields(verified, %Device{device | receipt: new_receipt})
-        end
+      case transport.(request) do
+        {:ok, 200, body} ->
+          with {:ok, new_receipt} <- decode_base64(body),
+               {:ok, verified} <- verify_receipt(new_receipt, trust, at) do
+            risk_metric_fields(verified, %Device{device | receipt: new_receipt})
+          end
 
-      {:ok, status, body} ->
-        {:error, {:apple_error, status, body}}
+        {:ok, status, body} ->
+          {:error, {:apple_error, status, body}}
 
-      {:error, reason} ->
-        {:error, {:transport_error, reason}}
+        {:error, reason} ->
+          {:error, {:transport_error, reason}}
+      end
+    end
+  end
+
+  defp build_token(device_check_key, at) do
+    case DeviceCheckToken.build(device_check_key, DateTime.to_unix(at)) do
+      {:ok, token} -> {:ok, token}
+      {:error, :not_p256_key} -> {:error, :invalid_device_check_key}
     end
   end
 

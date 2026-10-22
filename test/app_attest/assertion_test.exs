@@ -67,6 +67,13 @@ defmodule AppAttest.AssertionTest do
                {:error, :invalid_signature}
     end
 
+    test "rejects it followed by trailing bytes as an invalid assertion" do
+      for trailing <- [<<0>>, "junk"] do
+        assert validate_real(Fixtures.real_assertion() <> trailing, 0) ==
+                 {:error, :invalid_assertion}
+      end
+    end
+
     test "rejects it against a stored Counter equal to its own" do
       assert validate_real(Fixtures.real_assertion(), 2) == {:error, :counter_not_increasing}
     end

@@ -232,7 +232,7 @@ defmodule AppAttest.ReceiptTest do
       for root <- [nil, :apple, 42] do
         assert {:error, :untrusted_receipt} =
                  Receipt.verify(Fixtures.receipt(1, chain), %Trust{
-                   chain.trust
+                   Trust.apple()
                    | receipt_root: root
                  })
       end
@@ -251,6 +251,13 @@ defmodule AppAttest.ReceiptTest do
            [
              {6, "RECEIPT"},
              {17, "not a number"},
+             {19, "2026-01-01T00:00:00Z"},
+             {21, "2026-01-08T00:00:00Z"}
+           ]},
+          {"whose risk metric is negative",
+           [
+             {6, "RECEIPT"},
+             {17, "-5"},
              {19, "2026-01-01T00:00:00Z"},
              {21, "2026-01-08T00:00:00Z"}
            ]},

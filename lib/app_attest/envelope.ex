@@ -49,11 +49,14 @@ defmodule AppAttest.Envelope do
 
   # `CBOR.decode/1` reports malformed or non-binary input with one of its
   # own five error atoms; all of them collapse to `:error` here, so none
-  # leaves this module.
-  # Trailing bytes after the object are ignored, as they always were.
+  # leaves this module. Bytes after the object make it malformed too:
+  # Apple's SDK produces exactly one CBOR object, and an object that
+  # decodes the same under any trailing junk is one an attacker can hand
+  # in under as many different hashes as they like.
   defp decode(object) do
     case CBOR.decode(object) do
-      {:ok, decoded, _rest} -> {:ok, decoded}
+      {:ok, decoded, <<>>} -> {:ok, decoded}
+      {:ok, _decoded, _trailing_bytes} -> :error
       {:error, _cbor_reason} -> :error
     end
   end

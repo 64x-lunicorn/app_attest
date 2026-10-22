@@ -192,6 +192,19 @@ defmodule AppAttest.RiskMetricTest do
       assert claims["iat"] == DateTime.to_unix(at)
     end
 
+    test "refuses a DeviceCheck key that is not a P-256 key before sending anything" do
+      transport = fn _request ->
+        flunk("no request is sent with a key Apple cannot have issued")
+      end
+
+      key = %{Fixtures.device_check_key() | private_key: X509.PrivateKey.new_ec(:secp384r1)}
+
+      assert {:error, :invalid_device_check_key} =
+               RiskMetric.fetch(stored_device(), key, Fixtures.risk_metric_chain().trust,
+                 transport: transport
+               )
+    end
+
     test "rejects a response that is not base64 at all" do
       transport = respond(200, "not base64 at all!!")
 
