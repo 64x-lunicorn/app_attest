@@ -228,4 +228,68 @@ defmodule AppAttest.RiskMetricTest do
                )
     end
   end
+
+  # The real transport, `:httpc` against a local socket standing in for
+  # Apple's host: the one part of `fetch/4` its `opts[:transport]` seam
+  # cannot prove.
+  describe "http_request/2, the default transport" do
+    defp listen do
+      {:ok, listener} = :gen_tcp.listen(0, [:binary, active: false, ip: {127, 0, 0, 1}])
+      {:ok, port} = :inet.port(listener)
+      {listener, port}
+    end
+
+    defp request(port) do
+      %{
+        url: ~c"http://127.0.0.1:#{port}/v1/attestationData",
+        authorization: "the-device-check-jwt",
+        body: "the-receipt"
+      }
+    end
+
+    test "gives up on a server that accepts the connection and never answers" do
+      {listener, port} = listen()
+
+      Task.start(fn ->
+        {:ok, _socket} = :gen_tcp.accept(listener)
+        Process.sleep(:infinity)
+      end)
+
+      {microseconds, result} =
+        :timer.tc(fn -> RiskMetric.http_request(request(port), timeout: 200) end)
+
+      assert result == {:error, :timeout}
+      assert microseconds < 5_000_000
+    end
+
+    test "does not follow a redirect, so the DeviceCheck JWT never reaches another host" do
+      {elsewhere, elsewhere_port} = listen()
+      {redirecting, redirecting_port} = listen()
+      test_pid = self()
+
+      Task.start(fn ->
+        {:ok, _socket} = :gen_tcp.accept(elsewhere)
+        send(test_pid, :reached_elsewhere)
+      end)
+
+      Task.start(fn ->
+        {:ok, socket} = :gen_tcp.accept(redirecting)
+        {:ok, _request} = :gen_tcp.recv(socket, 0, 2000)
+
+        :gen_tcp.send(
+          socket,
+          "HTTP/1.1 307 Temporary Redirect\r\n" <>
+            "Location: http://127.0.0.1:#{elsewhere_port}/v1/attestationData\r\n" <>
+            "Content-Length: 0\r\nConnection: close\r\n\r\n"
+        )
+
+        :gen_tcp.close(socket)
+      end)
+
+      assert RiskMetric.http_request(request(redirecting_port), timeout: 2000) ==
+               {:ok, 307, ""}
+
+      refute_receive :reached_elsewhere, 300
+    end
+  end
 end

@@ -106,6 +106,11 @@ defmodule AppAttest.RiskMetric do
   @development_host ~c"https://data-development.appattest.apple.com"
   @path ~c"/v1/attestationData"
 
+  # How long the default transport waits to connect and for Apple's
+  # answer: `:httpc`'s own default is to wait forever, which would hang
+  # the calling process on a stalled connection.
+  @default_timeout 10_000
+
   @doc """
   Sends `device`'s current `receipt` to Apple's risk-metric endpoint for
   its `environment`, authenticated with `device_check_key`, and
@@ -123,6 +128,10 @@ defmodule AppAttest.RiskMetric do
     stamps the DeviceCheck JWT's `iat` claim and is the time the new
     receipt's certificate chain must be valid at, so the request and its
     answer share one clock, and a test fixes it.
+  * `:timeout` - how long the default transport waits, in milliseconds,
+    to connect to Apple and for its answer; defaults to 10 000. A request
+    that outlasts it is `{:transport_error, :timeout}`. Ignored with a
+    `:transport` of the caller's own.
 
   Returns `{:ok, result}` with the Device carrying the new receipt, to
   persist in place of the one passed, the risk metric, and that receipt's
@@ -136,7 +145,8 @@ defmodule AppAttest.RiskMetric do
           device_check_key(),
           Trust.t(),
           transport: transport(),
-          at: DateTime.t()
+          at: DateTime.t(),
+          timeout: timeout()
         ) :: {:ok, result()} | {:error, rejection()}
   def fetch(
         %Device{receipt: receipt, environment: environment} = device,
@@ -144,7 +154,11 @@ defmodule AppAttest.RiskMetric do
         %Trust{} = trust,
         opts \\ []
       ) do
-    transport = Keyword.get(opts, :transport, &http_request/1)
+    transport =
+      Keyword.get_lazy(opts, :transport, fn ->
+        &http_request(&1, timeout: Keyword.get(opts, :timeout, @default_timeout))
+      end)
+
     at = Keyword.get_lazy(opts, :at, &DateTime.utc_now/0)
 
     request = %{
@@ -214,10 +228,17 @@ defmodule AppAttest.RiskMetric do
   ## `:inets`, no new Hex dependency) against Apple's real host. Apple's own
   ## "Assessing fraud risk" curl example sends the header bare, with no
   ## "Bearer " prefix, although some unofficial client libraries add one.
+  ##
+  ## Public only for its own test, which drives it against a local socket
+  ## standing in for Apple's host; `fetch/4` is the seam a caller uses.
 
-  defp http_request(%{url: url, authorization: authorization, body: body}) do
+  @doc false
+  @spec http_request(request(), timeout: timeout()) ::
+          {:ok, 100..599, binary()} | {:error, term()}
+  def http_request(%{url: url, authorization: authorization, body: body}, opts) do
     headers = [{~c"authorization", String.to_charlist(authorization)}]
     content_type = ~c"application/octet-stream"
+    timeout = Keyword.fetch!(opts, :timeout)
 
     ssl_opts = [
       verify: :verify_peer,
@@ -226,7 +247,16 @@ defmodule AppAttest.RiskMetric do
       customize_hostname_check: [match_fun: :public_key.pkix_verify_hostname_match_fun(:https)]
     ]
 
-    case :httpc.request(:post, {url, headers, content_type, body}, [ssl: ssl_opts], []) do
+    # No redirect is followed: `:httpc` would repeat the POST, DeviceCheck
+    # JWT and all, against whatever host a redirect named.
+    http_opts = [
+      ssl: ssl_opts,
+      timeout: timeout,
+      connect_timeout: timeout,
+      autoredirect: false
+    ]
+
+    case :httpc.request(:post, {url, headers, content_type, body}, http_opts, []) do
       {:ok, {{_http_version, status, _reason}, _headers, resp_body}} ->
         {:ok, status, IO.iodata_to_binary(resp_body)}
 
