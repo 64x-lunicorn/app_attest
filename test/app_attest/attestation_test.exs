@@ -44,6 +44,20 @@ defmodule AppAttest.AttestationTest do
     validate_self_generated(%{attestation | attestation: attestation_object})
   end
 
+  # Validates `attestation_object` as if it were Apple's real fixture
+  # Attestation: its own key_id, challenge, App ID, root and time.
+  defp validate_fixture_bytes(attestation_object) do
+    Attestation.validate(
+      attestation_object,
+      Fixtures.key_id(),
+      Fixtures.challenge(),
+      Fixtures.app_id(),
+      Trust.apple(),
+      :development,
+      at: Fixtures.attestation_time()
+    )
+  end
+
   defp validate_fixture(key_id) do
     Attestation.validate(
       Fixtures.attestation(),
@@ -51,7 +65,8 @@ defmodule AppAttest.AttestationTest do
       Fixtures.challenge(),
       Fixtures.app_id(),
       Trust.apple(),
-      :development
+      :development,
+      at: Fixtures.attestation_time()
     )
   end
 
@@ -64,7 +79,8 @@ defmodule AppAttest.AttestationTest do
       Fixtures.challenge(),
       Fixtures.app_id(),
       trust,
-      :development
+      :development,
+      at: Fixtures.attestation_time()
     )
   end
 
@@ -77,7 +93,8 @@ defmodule AppAttest.AttestationTest do
                  Fixtures.challenge(),
                  Fixtures.app_id(),
                  Trust.apple(),
-                 :development
+                 :development,
+                 at: Fixtures.attestation_time()
                )
 
       assert %Device{counter: 0, environment: :development} = device
@@ -139,7 +156,8 @@ defmodule AppAttest.AttestationTest do
                Fixtures.challenge(),
                "TEAMID1234.not.this.app",
                Trust.apple(),
-               :development
+               :development,
+               at: Fixtures.attestation_time()
              ) == {:error, :key_id_mismatch}
     end
 
@@ -217,6 +235,21 @@ defmodule AppAttest.AttestationTest do
       # The last one declares a byte string longer than what follows.
       for input <- [<<0xFF>>, <<>>, <<0x5A, 0, 0, 0, 9>>] do
         assert validate_bytes(input) == {:error, :invalid_attestation}
+      end
+    end
+
+    test "rejects an attestation object followed by trailing bytes as invalid" do
+      for trailing <- [<<0>>, "junk", Fixtures.attestation()] do
+        assert validate_fixture_bytes(Fixtures.attestation() <> trailing) ==
+                 {:error, :invalid_attestation}
+      end
+    end
+
+    test "rejects a certificate followed by trailing bytes as invalid, never as trusted" do
+      [leaf_der, intermediate_der] = Fixtures.certificate_chain()
+
+      for chain <- [[leaf_der <> <<0>>, intermediate_der], [leaf_der, intermediate_der <> "junk"]] do
+        assert validate_fixture_chain(chain, Trust.apple()) == {:error, :invalid_attestation}
       end
     end
 
@@ -321,18 +354,56 @@ defmodule AppAttest.AttestationTest do
       end
     end
 
-    test "accepts Apple's real fixture although its credential certificate has long expired" do
-      # The fixture's credCert was issued in February 2024 for a few weeks'
-      # validity (App Attest leaf certificates are always short-lived) and
-      # so is long expired by the time this test runs; validity periods are
-      # deliberately not checked, only the signature chain.
-      [leaf_der | _intermediates] = Fixtures.certificate_chain()
+    test "rejects Apple's real fixture validated now, its credential certificate having expired" do
+      # The fixture's credCert was valid from 2024-02-03 to 2025-01-08 (read
+      # once off its bytes with `openssl x509 -dates`), so validated at the
+      # default time, now, the chain is no longer valid.
+      assert Attestation.validate(
+               Fixtures.attestation(),
+               @fixture_key_id,
+               Fixtures.challenge(),
+               Fixtures.app_id(),
+               Trust.apple(),
+               :development
+             ) == {:error, :certificate_expired}
+    end
 
-      {:Validity, _not_before, not_after} =
-        leaf_der |> X509.Certificate.from_der!() |> X509.Certificate.validity()
+    test "rejects Apple's real fixture validated before its credential certificate was issued" do
+      assert Attestation.validate(
+               Fixtures.attestation(),
+               @fixture_key_id,
+               Fixtures.challenge(),
+               Fixtures.app_id(),
+               Trust.apple(),
+               :development,
+               at: ~U[2024-02-01 00:00:00Z]
+             ) == {:error, :certificate_expired}
+    end
 
-      assert DateTime.compare(X509.DateTime.to_datetime(not_after), DateTime.utc_now()) == :lt
-      assert {:ok, %Device{}} = validate_fixture(@fixture_key_id)
+    test "accepts Apple's real fixture validated at a time its credential certificate was valid" do
+      for at <- [~U[2024-02-03 20:27:06Z], ~U[2024-08-01 12:00:00Z], ~U[2025-01-08 06:21:06Z]] do
+        assert {:ok, %Device{}} =
+                 Attestation.validate(
+                   Fixtures.attestation(),
+                   @fixture_key_id,
+                   Fixtures.challenge(),
+                   Fixtures.app_id(),
+                   Trust.apple(),
+                   :development,
+                   at: at
+                 )
+      end
+    end
+
+    test "checks the chain's validity before the nonce, as part of Apple's step 1" do
+      assert Attestation.validate(
+               Fixtures.attestation(),
+               @fixture_key_id,
+               "a-different-challenge",
+               Fixtures.app_id(),
+               Trust.apple(),
+               :development
+             ) == {:error, :certificate_expired}
     end
 
     test "rejects Apple's real fixture as untrusted against an unrelated root" do
@@ -375,6 +446,20 @@ defmodule AppAttest.AttestationTest do
       end)
     end
 
+    test "rejects Apple's real fixture against a root that is not even bytes instead of raising" do
+      for root <- [nil, :apple, 42] do
+        assert Attestation.validate(
+                 Fixtures.attestation(),
+                 Fixtures.key_id(),
+                 Fixtures.challenge(),
+                 Fixtures.app_id(),
+                 %Trust{Trust.apple() | app_attest_root: root},
+                 :development,
+                 at: Fixtures.attestation_time()
+               ) == {:error, :untrusted_root}
+      end
+    end
+
     test "rejects Apple's real fixture against a root that is not a certificate instead of crashing" do
       assert Attestation.validate(
                Fixtures.attestation(),
@@ -382,7 +467,8 @@ defmodule AppAttest.AttestationTest do
                Fixtures.challenge(),
                Fixtures.app_id(),
                %Trust{Trust.apple() | app_attest_root: <<1, 2, 3>>},
-               :development
+               :development,
+               at: Fixtures.attestation_time()
              ) == {:error, :untrusted_root}
     end
   end

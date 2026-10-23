@@ -15,7 +15,7 @@ defmodule AppAttest.RiskMetric do
   the caller to persist in place of the one it passed; it persists nothing
   on its own.
 
-  The new receipt is verified and read by `AppAttest.Receipt.verify/2`
+  The new receipt is verified and read by `AppAttest.Receipt.verify/3`
   against the Receipt root of the caller's `AppAttest.Trust`, Apple's
   general-purpose "Apple Root CA - G3" in `AppAttest.Trust.apple/0`, not
   the App Attest-specific root an Attestation's own chain uses: the real,
@@ -77,6 +77,11 @@ defmodule AppAttest.RiskMetric do
   @typedoc """
   * `:untrusted_receipt` - the receipt's signature, or its certificate
     chain against the Receipt root of `trust`, does not verify.
+  * `:certificate_expired` - the chain leads to the root, but a certificate
+    of it was not valid at `opts[:at]`: already expired, or not yet valid.
+  * `:invalid_device_check_key` - `device_check_key`'s private key is not
+    a P-256 key, the only kind Apple issues for DeviceCheck and the only
+    kind ES256 signs with; nothing is sent.
   * `:invalid_receipt` - Apple's response is not base64, or not a
     well-formed CMS-signed receipt of type `RECEIPT` carrying a risk metric
     and both validity dates.
@@ -87,6 +92,8 @@ defmodule AppAttest.RiskMetric do
   """
   @type rejection ::
           :untrusted_receipt
+          | :certificate_expired
+          | :invalid_device_check_key
           | :invalid_receipt
           | {:apple_error, non_neg_integer(), binary()}
           | {:transport_error, term()}
@@ -103,6 +110,11 @@ defmodule AppAttest.RiskMetric do
   @development_host ~c"https://data-development.appattest.apple.com"
   @path ~c"/v1/attestationData"
 
+  # How long the default transport waits to connect and for Apple's
+  # answer: `:httpc`'s own default is to wait forever, which would hang
+  # the calling process on a stalled connection.
+  @default_timeout 10_000
+
   @doc """
   Sends `device`'s current `receipt` to Apple's risk-metric endpoint for
   its `environment`, authenticated with `device_check_key`, and
@@ -111,9 +123,19 @@ defmodule AppAttest.RiskMetric do
   the one a real Apple Receipt chains to; a test substitutes its own, the
   same `AppAttest.Trust` that `AppAttest.Attestation.validate/6` takes.
 
-  `opts[:transport]` replaces the real HTTP call to Apple with a stand-in,
-  this module's only system boundary; every real caller omits it and gets
-  `AppAttest.RiskMetric`'s own `:httpc`-based default.
+  ## Options
+
+  * `:transport` - replaces the real HTTP call to Apple with a stand-in,
+    this module's only system boundary; every real caller omits it and gets
+    `AppAttest.RiskMetric`'s own `:httpc`-based default.
+  * `:at` - the time of this request, a `DateTime`; defaults to now. It
+    stamps the DeviceCheck JWT's `iat` claim and is the time the new
+    receipt's certificate chain must be valid at, so the request and its
+    answer share one clock, and a test fixes it.
+  * `:timeout` - how long the default transport waits, in milliseconds,
+    to connect to Apple and for its answer; defaults to 10 000. A request
+    that outlasts it is `{:transport_error, :timeout}`. Ignored with a
+    `:transport` of the caller's own.
 
   Returns `{:ok, result}` with the Device carrying the new receipt, to
   persist in place of the one passed, the risk metric, and that receipt's
@@ -126,7 +148,9 @@ defmodule AppAttest.RiskMetric do
           Device.t(),
           device_check_key(),
           Trust.t(),
-          transport: transport()
+          transport: transport(),
+          at: DateTime.t(),
+          timeout: timeout()
         ) :: {:ok, result()} | {:error, rejection()}
   def fetch(
         %Device{receipt: receipt, environment: environment} = device,
@@ -134,26 +158,42 @@ defmodule AppAttest.RiskMetric do
         %Trust{} = trust,
         opts \\ []
       ) do
-    transport = Keyword.get(opts, :transport, &http_request/1)
+    transport =
+      Keyword.get_lazy(opts, :transport, fn ->
+        &http_request(&1, timeout: Keyword.get(opts, :timeout, @default_timeout))
+      end)
 
-    request = %{
-      url: host(environment) ++ @path,
-      authorization: DeviceCheckToken.build(device_check_key, System.system_time(:second)),
-      body: Base.encode64(receipt)
-    }
+    at = Keyword.get_lazy(opts, :at, &DateTime.utc_now/0)
 
-    case transport.(request) do
-      {:ok, 200, body} ->
-        with {:ok, new_receipt} <- decode_base64(body),
-             {:ok, verified} <- verify_receipt(new_receipt, trust) do
-          risk_metric_fields(verified, %Device{device | receipt: new_receipt})
-        end
+    with {:ok, authorization} <- build_token(device_check_key, at) do
+      request = %{
+        url: host(environment) ++ @path,
+        authorization: authorization,
+        body: Base.encode64(receipt)
+      }
 
-      {:ok, status, body} ->
-        {:error, {:apple_error, status, body}}
+      request |> transport.() |> exchange(device, trust, at)
+    end
+  end
 
-      {:error, reason} ->
-        {:error, {:transport_error, reason}}
+  # Apple's answer to the exchange: the new receipt on 200, else one of its
+  # own documented statuses, or no answer at all.
+  defp exchange({:ok, 200, body}, %Device{} = device, trust, at) do
+    with {:ok, new_receipt} <- decode_base64(body),
+         {:ok, verified} <- verify_receipt(new_receipt, trust, at) do
+      risk_metric_fields(verified, %Device{device | receipt: new_receipt})
+    end
+  end
+
+  defp exchange({:ok, status, body}, _device, _trust, _at),
+    do: {:error, {:apple_error, status, body}}
+
+  defp exchange({:error, reason}, _device, _trust, _at), do: {:error, {:transport_error, reason}}
+
+  defp build_token(device_check_key, at) do
+    case DeviceCheckToken.build(device_check_key, DateTime.to_unix(at)) do
+      {:ok, token} -> {:ok, token}
+      {:error, :not_p256_key} -> {:error, :invalid_device_check_key}
     end
   end
 
@@ -161,10 +201,11 @@ defmodule AppAttest.RiskMetric do
   # of `rejection/0` is minted in this module, as `AppAttest.Attestation`
   # does with its certificate chain's. Each keeps its meaning: the new
   # receipt does not verify, or is not a well-formed Receipt.
-  defp verify_receipt(receipt, trust) do
-    case Receipt.verify(receipt, trust) do
+  defp verify_receipt(receipt, trust, at) do
+    case Receipt.verify(receipt, trust, at: at) do
       {:ok, verified} -> {:ok, verified}
       {:error, :untrusted_receipt} -> {:error, :untrusted_receipt}
+      {:error, :certificate_expired} -> {:error, :certificate_expired}
       {:error, :invalid_receipt} -> {:error, :invalid_receipt}
     end
   end
@@ -202,10 +243,17 @@ defmodule AppAttest.RiskMetric do
   ## `:inets`, no new Hex dependency) against Apple's real host. Apple's own
   ## "Assessing fraud risk" curl example sends the header bare, with no
   ## "Bearer " prefix, although some unofficial client libraries add one.
+  ##
+  ## Public only for its own test, which drives it against a local socket
+  ## standing in for Apple's host; `fetch/4` is the seam a caller uses.
 
-  defp http_request(%{url: url, authorization: authorization, body: body}) do
+  @doc false
+  @spec http_request(request(), timeout: timeout()) ::
+          {:ok, 100..599, binary()} | {:error, term()}
+  def http_request(%{url: url, authorization: authorization, body: body}, opts) do
     headers = [{~c"authorization", String.to_charlist(authorization)}]
     content_type = ~c"application/octet-stream"
+    timeout = Keyword.fetch!(opts, :timeout)
 
     ssl_opts = [
       verify: :verify_peer,
@@ -214,7 +262,16 @@ defmodule AppAttest.RiskMetric do
       customize_hostname_check: [match_fun: :public_key.pkix_verify_hostname_match_fun(:https)]
     ]
 
-    case :httpc.request(:post, {url, headers, content_type, body}, [ssl: ssl_opts], []) do
+    # No redirect is followed: `:httpc` would repeat the POST, DeviceCheck
+    # JWT and all, against whatever host a redirect named.
+    http_opts = [
+      ssl: ssl_opts,
+      timeout: timeout,
+      connect_timeout: timeout,
+      autoredirect: false
+    ]
+
+    case :httpc.request(:post, {url, headers, content_type, body}, http_opts, []) do
       {:ok, {{_http_version, status, _reason}, _headers, resp_body}} ->
         {:ok, status, IO.iodata_to_binary(resp_body)}
 

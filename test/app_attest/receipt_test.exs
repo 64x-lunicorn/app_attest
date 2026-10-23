@@ -13,6 +13,16 @@ defmodule AppAttest.ReceiptTest do
                 not_before: nil,
                 expiration_time: ~U[2024-05-04 20:27:06.193Z]
               }} =
+               Receipt.verify(Fixtures.attestation_receipt(), Trust.apple(),
+                 at: Fixtures.attestation_time()
+               )
+    end
+
+    test "rejects it as expired when verified now, its signing certificate having expired" do
+      # The Receipt's signing certificate was valid from 2023-03-08 to
+      # 2024-04-06 (read once off its bytes), so verified at the default
+      # time, now, its chain is no longer valid.
+      assert {:error, :certificate_expired} =
                Receipt.verify(Fixtures.attestation_receipt(), Trust.apple())
     end
 
@@ -20,7 +30,8 @@ defmodule AppAttest.ReceiptTest do
       assert {:error, :untrusted_receipt} =
                Receipt.verify(
                  Fixtures.attestation_receipt(),
-                 %Trust{Trust.apple() | receipt_root: Trust.apple().app_attest_root}
+                 %Trust{Trust.apple() | receipt_root: Trust.apple().app_attest_root},
+                 at: Fixtures.attestation_time()
                )
     end
 
@@ -32,7 +43,8 @@ defmodule AppAttest.ReceiptTest do
         assert {:error, :invalid_receipt} =
                  Receipt.verify(
                    binary_part(receipt, 0, length),
-                   Trust.apple()
+                   Trust.apple(),
+                   at: Fixtures.attestation_time()
                  )
       end
     end
@@ -45,15 +57,123 @@ defmodule AppAttest.ReceiptTest do
     test "answers it with any single byte flipped, never raising" do
       receipt = Fixtures.attestation_receipt()
       trust = Trust.apple()
-      genuine = Receipt.verify(receipt, trust)
+      at = Fixtures.attestation_time()
+      genuine = Receipt.verify(receipt, trust, at: at)
 
       for position <- 0..(byte_size(receipt) - 1) do
-        assert Receipt.verify(Fixtures.flip_byte(receipt, position), trust) in [
+        assert Receipt.verify(Fixtures.flip_byte(receipt, position), trust, at: at) in [
                  {:error, :untrusted_receipt},
                  {:error, :invalid_receipt},
                  genuine
                ]
       end
+    end
+  end
+
+  # The RFC 5652 OIDs a test puts in place of the genuine ones.
+  @signed_data_oid {1, 2, 840, 113_549, 1, 7, 2}
+  @sha384_oid {2, 16, 840, 1, 101, 3, 4, 2, 2}
+  @sha256_with_rsa_oid {1, 2, 840, 113_549, 1, 1, 11}
+
+  # `receipt` with `fun` applied to its decoded CMS SignedData and the
+  # envelope re-encoded: the signature covers the content alone, so an
+  # envelope changed this way still carries a genuine signature.
+  defp with_signed_data(receipt, fun) do
+    {:ContentInfo, oid, signed_data} = :public_key.der_decode(:ContentInfo, receipt)
+    :public_key.der_encode(:ContentInfo, {:ContentInfo, oid, fun.(signed_data)})
+  end
+
+  defp with_certificates(receipt, fun) do
+    with_signed_data(receipt, fn {:SignedData, v, da, eci, certs, crls, sis} ->
+      {:SignedData, v, da, eci, fun.(certs), crls, sis}
+    end)
+  end
+
+  defp with_signer_info(receipt, fun) do
+    with_signed_data(receipt, fn {:SignedData, v, da, eci, certs, crls, [signer_info]} ->
+      {:SignedData, v, da, eci, certs, crls, [fun.(signer_info)]}
+    end)
+  end
+
+  describe "verify/3 and the Receipt's CMS envelope" do
+    test "finds the signer's chain whatever order the certificates are listed in" do
+      receipt = Fixtures.attestation_receipt()
+      at = Fixtures.attestation_time()
+      {:ok, genuine} = Receipt.verify(receipt, Trust.apple(), at: at)
+
+      # Apple lists signer, intermediate, root; every other order of the
+      # three verifies the same.
+      for order <- [[2, 1, 0], [1, 0, 2], [0, 2, 1], [2, 0, 1], [1, 2, 0]] do
+        reordered =
+          with_certificates(receipt, fn certs -> Enum.map(order, &Enum.at(certs, &1)) end)
+
+        assert Receipt.verify(reordered, Trust.apple(), at: at) == {:ok, genuine}
+      end
+    end
+
+    test "ignores a certificate in the set that is not part of the signer's chain" do
+      receipt = Fixtures.attestation_receipt()
+      at = Fixtures.attestation_time()
+      {:ok, genuine} = Receipt.verify(receipt, Trust.apple(), at: at)
+      stranger = {:certificate, :public_key.der_decode(:Certificate, Fixtures.untrusted_root())}
+
+      for place <- [&[stranger | &1], &(&1 ++ [stranger]), &List.insert_at(&1, 1, stranger)] do
+        assert Receipt.verify(with_certificates(receipt, place), Trust.apple(), at: at) ==
+                 {:ok, genuine}
+      end
+    end
+
+    test "rejects a Receipt whose signed content is not of CMS type id-data" do
+      chain = Fixtures.risk_metric_chain()
+
+      receipt =
+        with_signed_data(Fixtures.receipt(1, chain), fn {:SignedData, v, da, eci, certs, crls,
+                                                         sis} ->
+          {:EncapsulatedContentInfo, _id_data, content} = eci
+
+          {:SignedData, v, da, {:EncapsulatedContentInfo, @signed_data_oid, content}, certs, crls,
+           sis}
+        end)
+
+      assert {:error, :invalid_receipt} = Receipt.verify(receipt, chain.trust)
+    end
+
+    test "rejects a Receipt whose SignedData declares no SHA-256 digest algorithm" do
+      chain = Fixtures.risk_metric_chain()
+
+      receipt =
+        with_signed_data(Fixtures.receipt(1, chain), fn {:SignedData, v, _da, eci, certs, crls,
+                                                         sis} ->
+          {:SignedData, v, [{:DigestAlgorithmIdentifier, @sha384_oid, :asn1_NOVALUE}], eci, certs,
+           crls, sis}
+        end)
+
+      assert {:error, :invalid_receipt} = Receipt.verify(receipt, chain.trust)
+    end
+
+    test "rejects a Receipt whose signer declares a signature algorithm other than ecdsa-with-SHA256" do
+      chain = Fixtures.risk_metric_chain()
+
+      receipt =
+        with_signer_info(Fixtures.receipt(1, chain), fn {:SignerInfo, v, sid, da, sa_attrs, _alg,
+                                                         sig, ua} ->
+          {:SignerInfo, v, sid, da, sa_attrs,
+           {:SignatureAlgorithmIdentifier, @sha256_with_rsa_oid, :asn1_NOVALUE}, sig, ua}
+        end)
+
+      assert {:error, :invalid_receipt} = Receipt.verify(receipt, chain.trust)
+    end
+
+    test "rejects a Receipt whose SignerInfo version is not 1, the one issuerAndSerialNumber takes" do
+      chain = Fixtures.risk_metric_chain()
+
+      receipt =
+        with_signer_info(Fixtures.receipt(1, chain), fn {:SignerInfo, _v1, sid, da, sa_attrs, alg,
+                                                         sig, ua} ->
+          {:SignerInfo, :v3, sid, da, sa_attrs, alg, sig, ua}
+        end)
+
+      assert {:error, :invalid_receipt} = Receipt.verify(receipt, chain.trust)
     end
   end
 
@@ -68,6 +188,15 @@ defmodule AppAttest.ReceiptTest do
                 not_before: ~U[2026-01-01 00:00:00Z],
                 expiration_time: ~U[2026-01-08 00:00:00Z]
               }} = Receipt.verify(Fixtures.receipt(42, chain), chain.trust)
+    end
+
+    test "rejects a Receipt whose signing certificate is not valid at the verification time" do
+      chain = Fixtures.risk_metric_chain()
+
+      assert {:error, :certificate_expired} =
+               Receipt.verify(Fixtures.receipt(1, chain), chain.trust,
+                 at: ~U[2100-01-01 00:00:00Z]
+               )
     end
 
     test "rejects a Receipt whose chain does not lead to the given root" do
@@ -97,6 +226,18 @@ defmodule AppAttest.ReceiptTest do
                Receipt.verify("not a receipt", Fixtures.risk_metric_chain().trust)
     end
 
+    test "rejects a genuine Receipt against a root that is not even bytes as untrusted, never raising" do
+      chain = Fixtures.risk_metric_chain()
+
+      for root <- [nil, :apple, 42] do
+        assert {:error, :untrusted_receipt} =
+                 Receipt.verify(Fixtures.receipt(1, chain), %Trust{
+                   Trust.apple()
+                   | receipt_root: root
+                 })
+      end
+    end
+
     test "rejects something that is not bytes at all, never raising" do
       assert {:error, :invalid_receipt} =
                Receipt.verify(nil, Fixtures.risk_metric_chain().trust)
@@ -110,6 +251,13 @@ defmodule AppAttest.ReceiptTest do
            [
              {6, "RECEIPT"},
              {17, "not a number"},
+             {19, "2026-01-01T00:00:00Z"},
+             {21, "2026-01-08T00:00:00Z"}
+           ]},
+          {"whose risk metric is negative",
+           [
+             {6, "RECEIPT"},
+             {17, "-5"},
              {19, "2026-01-01T00:00:00Z"},
              {21, "2026-01-08T00:00:00Z"}
            ]},

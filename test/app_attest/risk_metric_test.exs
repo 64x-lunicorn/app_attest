@@ -18,7 +18,8 @@ defmodule AppAttest.RiskMetricTest do
         Fixtures.challenge(),
         Fixtures.app_id(),
         Trust.apple(),
-        :development
+        :development,
+        at: Fixtures.attestation_time()
       )
 
     device
@@ -157,6 +158,53 @@ defmodule AppAttest.RiskMetricTest do
       end
     end
 
+    test "rejects a new receipt whose chain is not valid at the given time" do
+      chain = Fixtures.risk_metric_chain()
+      transport = respond(200, Base.encode64(Fixtures.receipt(1, chain)))
+
+      assert {:error, :certificate_expired} =
+               RiskMetric.fetch(stored_device(), Fixtures.device_check_key(), chain.trust,
+                 transport: transport,
+                 at: ~U[2100-01-01 00:00:00Z]
+               )
+    end
+
+    test "stamps the JWT's iat with the given time, so the request and the receipt share one clock" do
+      chain = Fixtures.risk_metric_chain()
+      test_pid = self()
+      # An hour from now: within the fresh chain's validity, and not now.
+      at = DateTime.utc_now() |> DateTime.add(3600, :second) |> DateTime.truncate(:second)
+
+      transport = fn request ->
+        send(test_pid, {:request, request})
+        {:ok, 200, Base.encode64(Fixtures.receipt(1, chain))}
+      end
+
+      assert {:ok, _result} =
+               RiskMetric.fetch(stored_device(), Fixtures.device_check_key(), chain.trust,
+                 transport: transport,
+                 at: at
+               )
+
+      assert_received {:request, %{authorization: jwt}}
+      [_header, claims_b64, _signature] = String.split(jwt, ".")
+      claims = claims_b64 |> Base.url_decode64!(padding: false) |> :json.decode()
+      assert claims["iat"] == DateTime.to_unix(at)
+    end
+
+    test "refuses a DeviceCheck key that is not a P-256 key before sending anything" do
+      transport = fn _request ->
+        flunk("no request is sent with a key Apple cannot have issued")
+      end
+
+      key = %{Fixtures.device_check_key() | private_key: X509.PrivateKey.new_ec(:secp384r1)}
+
+      assert {:error, :invalid_device_check_key} =
+               RiskMetric.fetch(stored_device(), key, Fixtures.risk_metric_chain().trust,
+                 transport: transport
+               )
+    end
+
     test "rejects a response that is not base64 at all" do
       transport = respond(200, "not base64 at all!!")
 
@@ -191,6 +239,82 @@ defmodule AppAttest.RiskMetricTest do
                  Fixtures.risk_metric_chain().trust,
                  transport: transport
                )
+    end
+  end
+
+  # Answers every request that arrives on `listener` with `response`, until
+  # the test that owns the listener ends and closes it; a connection the
+  # client closes before sending anything is simply the next one's turn.
+  defp redirect_every_request(listener, response) do
+    with {:ok, socket} <- :gen_tcp.accept(listener) do
+      case :gen_tcp.recv(socket, 0, 2000) do
+        {:ok, _request} -> :gen_tcp.send(socket, response)
+        {:error, _closed_or_timeout} -> :ok
+      end
+
+      :gen_tcp.close(socket)
+      redirect_every_request(listener, response)
+    end
+  end
+
+  # The real transport, `:httpc` against a local socket standing in for
+  # Apple's host: the one part of `fetch/4` its `opts[:transport]` seam
+  # cannot prove.
+  describe "http_request/2, the default transport" do
+    defp listen do
+      {:ok, listener} = :gen_tcp.listen(0, [:binary, active: false, ip: {127, 0, 0, 1}])
+      {:ok, port} = :inet.port(listener)
+      {listener, port}
+    end
+
+    defp request(port) do
+      %{
+        url: ~c"http://127.0.0.1:#{port}/v1/attestationData",
+        authorization: "the-device-check-jwt",
+        body: "the-receipt"
+      }
+    end
+
+    test "gives up on a server that accepts the connection and never answers" do
+      {listener, port} = listen()
+
+      # Reads the request and then holds the connection open, answering
+      # nothing, until the client gives up and closes it.
+      Task.start(fn ->
+        with {:ok, socket} <- :gen_tcp.accept(listener),
+             {:ok, _request} <- :gen_tcp.recv(socket, 0, :infinity),
+             do: :gen_tcp.recv(socket, 0, :infinity)
+      end)
+
+      {microseconds, result} =
+        :timer.tc(fn -> RiskMetric.http_request(request(port), timeout: 200) end)
+
+      assert result == {:error, :timeout}
+      assert microseconds < 5_000_000
+    end
+
+    test "does not follow a redirect, so the DeviceCheck JWT never reaches another host" do
+      {elsewhere, elsewhere_port} = listen()
+      {redirecting, redirecting_port} = listen()
+      test_pid = self()
+
+      Task.start(fn ->
+        with {:ok, _socket} <- :gen_tcp.accept(elsewhere), do: send(test_pid, :reached_elsewhere)
+      end)
+
+      Task.start(fn ->
+        redirect_every_request(
+          redirecting,
+          "HTTP/1.1 307 Temporary Redirect\r\n" <>
+            "Location: http://127.0.0.1:#{elsewhere_port}/v1/attestationData\r\n" <>
+            "Content-Length: 0\r\nConnection: close\r\n\r\n"
+        )
+      end)
+
+      assert RiskMetric.http_request(request(redirecting_port), timeout: 2000) ==
+               {:ok, 307, ""}
+
+      refute_receive :reached_elsewhere, 300
     end
   end
 end

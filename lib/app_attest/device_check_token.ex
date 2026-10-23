@@ -12,25 +12,46 @@ defmodule AppAttest.DeviceCheckToken do
   # package for the header and claim shape. The `kid` is the DeviceCheck
   # key identifier, not a device's Key ID.
 
+  require Record
+
+  Record.defrecordp(
+    :ec_private_key,
+    :ECPrivateKey,
+    Record.extract(:ECPrivateKey, from_lib: "public_key/include/public_key.hrl")
+  )
+
   # RFC 7518 section 3.4: JWS ES256 wants the signature as a fixed-width
-  # r||s pair, one P-256 field element (32 bytes) each.
+  # r||s pair, one P-256 field element (32 bytes) each. ES256 is P-256 by
+  # definition, and Apple issues DeviceCheck keys on no other curve, so a
+  # key on any other is refused rather than signed with: its r||s would be
+  # the wrong width, or `pad_to_coordinate_size/1` would raise on it.
   @p256_coordinate_size 32
+  @p256_oid {1, 2, 840, 10_045, 3, 1, 7}
+  @p256_curves [{:namedCurve, @p256_oid}, {:namedCurve, :secp256r1}, {:namedCurve, :prime256v1}]
 
   @doc false
-  @spec build(AppAttest.RiskMetric.device_check_key(), integer()) :: String.t()
+  @spec build(AppAttest.RiskMetric.device_check_key(), integer()) ::
+          {:ok, String.t()} | {:error, :not_p256_key}
   def build(%{key_id: key_id, team_id: team_id, private_key: private_key}, issued_at) do
-    header = json_base64(%{"alg" => "ES256", "kid" => key_id})
-    claims = json_base64(%{"iss" => team_id, "iat" => issued_at})
-    signing_input = header <> "." <> claims
+    if p256?(private_key) do
+      header = json_base64(%{"alg" => "ES256", "kid" => key_id})
+      claims = json_base64(%{"iss" => team_id, "iat" => issued_at})
+      signing_input = header <> "." <> claims
 
-    signature =
-      signing_input
-      |> :public_key.sign(:sha256, private_key)
-      |> raw_signature()
-      |> Base.url_encode64(padding: false)
+      signature =
+        signing_input
+        |> :public_key.sign(:sha256, private_key)
+        |> raw_signature()
+        |> Base.url_encode64(padding: false)
 
-    signing_input <> "." <> signature
+      {:ok, signing_input <> "." <> signature}
+    else
+      {:error, :not_p256_key}
+    end
   end
+
+  defp p256?(ec_private_key(parameters: parameters)), do: parameters in @p256_curves
+  defp p256?(_other_key), do: false
 
   # :public_key.sign/3 returns a DER `Dss-Sig-Value` SEQUENCE{r, s} (the
   # same structure DSA and ECDSA signatures both use); JWS ES256 wants the

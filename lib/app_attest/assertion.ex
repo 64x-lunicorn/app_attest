@@ -21,8 +21,13 @@ defmodule AppAttest.Assertion do
   rejected with one of these, never by raising: the whole point of
   this library is to distrust its own input.
 
+  * `:invalid_device` - `device` is not one `AppAttest.Attestation.validate/7`
+    returned: its `counter` is not a non-negative integer, or its
+    `environment` is neither `:development` nor `:production`. The
+    caller's stored state is as distrusted as the Assertion itself.
   * `:environment_mismatch` - `expected_environment` does not match the
-    Device's `environment`.
+    Device's `environment`, including an `expected_environment` that is
+    neither `:development` nor `:production`: nothing matches it.
   * `:invalid_assertion` - `assertion_object` is not an assertion object:
     not well-formed CBOR at all, a missing `signature` or
     `authenticatorData`, or one of the two not a CBOR byte string. Which
@@ -39,7 +44,8 @@ defmodule AppAttest.Assertion do
     the Device's `counter`.
   """
   @type rejection ::
-          :environment_mismatch
+          :invalid_device
+          | :environment_mismatch
           | :invalid_assertion
           | :invalid_authenticator_data
           | :invalid_signature
@@ -49,16 +55,26 @@ defmodule AppAttest.Assertion do
   @doc """
   Validates `assertion_object` — the raw, CBOR-encoded assertion Apple's SDK
   produces — against `client_data` (the request-specific data the caller
-  asked the device to sign, typically embedding a fresh server challenge),
-  `app_id` (`"<Team ID>.<bundle ID>"`) and `device`, the caller's stored
-  `AppAttest.Device` (what `AppAttest.Attestation.validate/6` returned, or
-  the previous Assertion moved on): its `public_key`, `counter` and
-  `environment`.
+  asked the device to sign), `app_id` (`"<Team ID>.<bundle ID>"`) and
+  `device`, the caller's stored `AppAttest.Device` (what
+  `AppAttest.Attestation.validate/7` returned, or the previous Assertion
+  moved on): its `public_key`, `counter` and `environment`.
 
   Apple's own on-device API signs every Assertion over `authenticatorData`
   concatenated with the SHA-256 hash of `client_data`, never
   `authenticatorData` alone, so a genuine Assertion only verifies against
   the same `client_data` the device was asked to sign for that request.
+  That is why `client_data` must hold a fresh, single-use server challenge
+  and the request itself (its body, say): the Counter only rejects an
+  Assertion seen before, and only the signature over `client_data` binds
+  an Assertion to this one request rather than to any request a device
+  signed in advance. Apple's own guide checks that embedded challenge
+  against the one the server issued; this library cannot, since it never
+  sees how the caller builds `client_data`.
+
+  Persist the returned Device with a compare-and-set on the stored
+  Counter: two Assertions validated at the same time against the same
+  stored Device both pass, and only the first persisted may win.
 
   An Assertion carries no environment bytes of its own, so `expected_environment`
   is the environment the caller expects for this request; it is
@@ -83,7 +99,8 @@ defmodule AppAttest.Assertion do
         %Device{public_key: public_key, counter: stored_counter} = device,
         expected_environment
       ) do
-    with :ok <- check_environment(device.environment, expected_environment),
+    with :ok <- check_device(device),
+         :ok <- check_environment(device.environment, expected_environment),
          {:ok, %{signature: signature, auth_data: auth_data}} <- decode(assertion_object),
          {:ok, authenticator_data} <- parse_authenticator_data(auth_data),
          :ok <- check_signature(auth_data, client_data, signature, public_key),
@@ -115,6 +132,16 @@ defmodule AppAttest.Assertion do
       {:error, :other_app_id} -> {:error, :app_id_mismatch}
     end
   end
+
+  # A Device with a Counter nothing can be strictly greater than, or an
+  # environment no Attestation yields, is not a Device `AppAttest.Attestation`
+  # returned, whatever the caller stored.
+  defp check_device(%Device{counter: counter, environment: environment})
+       when is_integer(counter) and counter >= 0 and
+              environment in [:development, :production],
+       do: :ok
+
+  defp check_device(%Device{}), do: {:error, :invalid_device}
 
   defp check_environment(stored_environment, expected_environment) do
     if stored_environment == expected_environment do
